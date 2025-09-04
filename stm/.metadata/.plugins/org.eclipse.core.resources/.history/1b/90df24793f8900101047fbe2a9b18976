@@ -1,0 +1,9 @@
+#include "tim.h"       // for htim7
+#include "control.h"   // your PID routines
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+    if (htim->Instance == TIM7) {
+        control_tick();   // run PID every 10 ms
+    }
+}

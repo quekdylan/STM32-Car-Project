@@ -23,6 +23,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "oled.h"
+#include "control.h"
+#include "userButton.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -44,6 +46,7 @@
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
+TIM_HandleTypeDef htim5;
 TIM_HandleTypeDef htim9;
 
 /* Definitions for defaultTask */
@@ -67,6 +70,13 @@ const osThreadAttr_t encoderTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
+/* Definitions for control_Task */
+osThreadId_t control_TaskHandle;
+const osThreadAttr_t control_Task_attributes = {
+  .name = "control_Task",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -78,9 +88,11 @@ static void MX_TIM4_Init(void);
 static void MX_TIM9_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_TIM5_Init(void);
 void StartDefaultTask(void *argument);
 void motor(void *argument);
 void encoder_task(void *argument);
+void controlTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -124,9 +136,12 @@ int main(void)
   MX_TIM9_Init();
   MX_TIM2_Init();
   MX_TIM3_Init();
+  MX_TIM5_Init();
   /* USER CODE BEGIN 2 */
   OLED_Init();
   motor_init();
+  // Start 100 Hz control loop
+  control_init();
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -153,10 +168,14 @@ int main(void)
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
   /* creation of MotorTask */
-  MotorTaskHandle = osThreadNew(motor, NULL, &MotorTask_attributes);
+  // Disabled: demo motor PWM ramp interferes with PID control
+  // MotorTaskHandle = osThreadNew(motor, NULL, &MotorTask_attributes);
 
   /* creation of encoderTask */
   encoderTaskHandle = osThreadNew(encoder_task, NULL, &encoderTask_attributes);
+
+  /* creation of control_Task */
+  control_TaskHandle = osThreadNew(controlTask, NULL, &control_Task_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -387,6 +406,51 @@ static void MX_TIM4_Init(void)
 }
 
 /**
+  * @brief TIM5 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM5_Init(void)
+{
+
+  /* USER CODE BEGIN TIM5_Init 0 */
+
+  /* USER CODE END TIM5_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM5_Init 1 */
+
+  /* USER CODE END TIM5_Init 1 */
+  htim5.Instance = TIM5;
+  htim5.Init.Prescaler = 1599;
+  htim5.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim5.Init.Period = 99;
+  htim5.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim5.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim5) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim5, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim5, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM5_Init 2 */
+
+  /* USER CODE END TIM5_Init 2 */
+
+}
+
+/**
   * @brief TIM9 Initialization Function
   * @param None
   * @retval None
@@ -573,39 +637,69 @@ void motor(void *argument)
 void encoder_task(void *argument)
 {
   /* USER CODE BEGIN encoder_task */
-	int32_t last_left_counts = 0;
-	  int32_t last_right_counts = 0;
-	  char buffer[32];
+  char buffer[32];
+  for(;;)
+  {
+    int32_t tL=0,tR=0,mL=0,mR=0;
+    control_get_target_and_measured(&tL, &tR, &mL, &mR);
+    int8_t oL=0,oR=0;
+    control_get_outputs(&oL, &oR);
 
-	  for(;;)
-	  {
-	    // Calculate speed (ticks per update period)
-	    int32_t current_left_counts = motor_get_left_encoder_counts();
-	    int32_t current_right_counts = motor_get_right_encoder_counts();
+    OLED_Clear();
 
-	    // Speed = difference in counts
-	    int32_t left_speed = current_left_counts - last_left_counts;
-	    int32_t right_speed = current_right_counts - last_right_counts;
+    // Show left: Target/Measured
+    sprintf(buffer, "L T/M:%ld/%ld", tL, mL);
+    OLED_ShowString(0, 0, (uint8_t*)buffer);
 
-	    last_left_counts = current_left_counts;
-	    last_right_counts = current_right_counts;
+    // Show right: Target/Measured
+    sprintf(buffer, "R T/M:%ld/%ld", tR, mR);
+    OLED_ShowString(0, 16, (uint8_t*)buffer);
 
-	    // Display on OLED
-	    OLED_Clear();
+    // Show PWM outputs (percent)
+    sprintf(buffer, "L PWM:%d", (int)oL);
+    OLED_ShowString(0, 32, (uint8_t*)buffer);
+    sprintf(buffer, "R PWM:%d", (int)oR);
+    OLED_ShowString(0, 48, (uint8_t*)buffer);
 
-	    // Format and display left motor speed
-	    sprintf(buffer, "L Spd: %ld", left_speed);
-	    OLED_ShowString(0, 0, (uint8_t*)buffer);
-
-	    // Format and display right motor speed
-	    sprintf(buffer, "R Spd: %ld", right_speed);
-	    OLED_ShowString(0, 16, (uint8_t*)buffer);
-
-	    OLED_Refresh_Gram();
-
-	    osDelay(100);
-	  }
+    OLED_Refresh_Gram();
+    osDelay(100);
+  }
   /* USER CODE END encoder_task */
+}
+
+/* USER CODE BEGIN Header_controlTask */
+/**
+* @brief Function implementing the control_Task thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_controlTask */
+void controlTask(void *argument)
+{
+  /* USER CODE BEGIN controlTask */
+  // Button-driven step sequence for tuning.
+  // Sequence in ticks/10ms: 0 -> 10 -> 20 -> 0 -> -10 -> -20 -> 0 -> ...
+  const int32_t seq[] = {0, 10, 20, 0, -10, -20};
+  const uint32_t seq_len = sizeof(seq)/sizeof(seq[0]);
+  uint32_t idx = 0;
+
+  // Apply initial target
+  control_set_target_ticks_per_dt(seq[idx], seq[idx]);
+
+  uint8_t pressed_prev = user_is_pressed();
+
+  for(;;)
+  {
+    uint8_t pressed = user_is_pressed();
+    // On rising edge (not pressed -> pressed), advance step
+    if (!pressed_prev && pressed) {
+        idx = (idx + 1) % seq_len;
+        control_set_target_ticks_per_dt(seq[idx], seq[idx]);
+    }
+    pressed_prev = pressed;
+    osDelay(50);
+  }
+  /* USER CODE END controlTask */
 }
 
 /**
