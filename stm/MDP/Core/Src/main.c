@@ -24,7 +24,9 @@
 /* USER CODE BEGIN Includes */
 #include "oled.h"
 #include "control.h"
+#include "motor.h"
 #include "userButton.h"
+#include "servo.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -34,7 +36,10 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+// Approximate mapping from speed percent to encoder ticks per 10 ms for PID
+// Adjust SPEED_TICKS_100 to your robot after measuring at 100% open-loop.
+#define SPEED_TICKS_100   40   // example: ~40 ticks/10 ms at 100%
+#define SPEED_TICKS_20    (SPEED_TICKS_100 * 20 / 100)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -47,6 +52,7 @@ TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim5;
+TIM_HandleTypeDef htim8;
 TIM_HandleTypeDef htim9;
 
 /* Definitions for defaultTask */
@@ -77,7 +83,24 @@ const osThreadAttr_t control_Task_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
+/* Definitions for servo_Task */
+osThreadId_t servo_TaskHandle;
+const osThreadAttr_t servo_Task_attributes = {
+  .name = "servo_Task",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
+/* Definitions for userButton_Task */
+osThreadId_t userButton_TaskHandle;
+const osThreadAttr_t userButton_Task_attributes = {
+  .name = "userButton_Task",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* USER CODE BEGIN PV */
+// Shared servo instance so multiple tasks can reference it
+static Servo g_steer;
+static volatile uint8_t g_servo_ready = 0;
 
 /* USER CODE END PV */
 
@@ -89,10 +112,13 @@ static void MX_TIM9_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_TIM5_Init(void);
+static void MX_TIM8_Init(void);
 void StartDefaultTask(void *argument);
 void motor(void *argument);
 void encoder_task(void *argument);
 void controlTask(void *argument);
+void servoTask(void *argument);
+void userButtonTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -137,6 +163,7 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM3_Init();
   MX_TIM5_Init();
+  MX_TIM8_Init();
   /* USER CODE BEGIN 2 */
   OLED_Init();
   motor_init();
@@ -168,14 +195,19 @@ int main(void)
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
   /* creation of MotorTask */
-  // Disabled: demo motor PWM ramp interferes with PID control
-  // MotorTaskHandle = osThreadNew(motor, NULL, &MotorTask_attributes);
+  MotorTaskHandle = osThreadNew(motor, NULL, &MotorTask_attributes);
 
   /* creation of encoderTask */
   encoderTaskHandle = osThreadNew(encoder_task, NULL, &encoderTask_attributes);
 
   /* creation of control_Task */
   control_TaskHandle = osThreadNew(controlTask, NULL, &control_Task_attributes);
+
+  /* creation of servo_Task */
+  servo_TaskHandle = osThreadNew(servoTask, NULL, &servo_Task_attributes);
+
+  /* creation of userButton_Task */
+  userButton_TaskHandle = osThreadNew(userButtonTask, NULL, &userButton_Task_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -451,6 +483,81 @@ static void MX_TIM5_Init(void)
 }
 
 /**
+  * @brief TIM8 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM8_Init(void)
+{
+
+  /* USER CODE BEGIN TIM8_Init 0 */
+
+  /* USER CODE END TIM8_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
+
+  /* USER CODE BEGIN TIM8_Init 1 */
+
+  /* USER CODE END TIM8_Init 1 */
+  htim8.Instance = TIM8;
+  htim8.Init.Prescaler = 319;
+  htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim8.Init.Period = 999;
+  htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim8.Init.RepetitionCounter = 0;
+  htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_Base_Init(&htim8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim8, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim8, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+  if (HAL_TIM_PWM_ConfigChannel(&htim8, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
+  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
+  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
+  sBreakDeadTimeConfig.DeadTime = 0;
+  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
+  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
+  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
+  if (HAL_TIMEx_ConfigBreakDeadTime(&htim8, &sBreakDeadTimeConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM8_Init 2 */
+
+  /* USER CODE END TIM8_Init 2 */
+  HAL_TIM_MspPostInit(&htim8);
+
+}
+
+/**
   * @brief TIM9 Initialization Function
   * @param None
   * @retval None
@@ -521,6 +628,7 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
@@ -586,44 +694,25 @@ void StartDefaultTask(void *argument)
 void motor(void *argument)
 {
   /* USER CODE BEGIN motor */
-	uint8_t run_sequence = 0;
+  uint8_t prev = user_is_pressed();
+  for(;;) {
+    uint8_t pressed = user_is_pressed();
 
-	  for(;;)
-	  {
-	    if (user_is_pressed()) {
-	        run_sequence = 1;
-	    }
+    if (pressed) {
+      if (!prev && g_servo_ready) {
+        // Center servo on rising edge
+        Servo_Center(&g_steer);
+      }
+      // Drive both motors forward at 20% open-loop
+      motor_set_speeds(20, 20);
+    } else {
+      // Stop when released
+      motor_stop();
+    }
 
-	    if (run_sequence) {
-	        // Ramp up forward
-	        for (int8_t speed = 0; speed <= 100; speed += 5) {
-	            motor_set_speeds(speed, speed);
-	            osDelay(200);
-	        }
-	        // Ramp down forward
-	        for (int8_t speed = 100; speed >= 0; speed -= 5) {
-	            motor_set_speeds(speed, speed);
-	            osDelay(200);
-	        }
-
-	        osDelay(500); // Pause
-
-	        // Ramp up reverse
-	        for (int8_t speed = 0; speed >= -100; speed -= 5) {
-	            motor_set_speeds(speed, speed);
-	            osDelay(200);
-	        }
-	        // Ramp down reverse
-	        for (int8_t speed = -100; speed <= 0; speed += 5) {
-	            motor_set_speeds(speed, speed);
-	            osDelay(200);
-	        }
-
-	        motor_stop();
-	        run_sequence = 0; // Sequence finished, wait for next button press
-	    }
-	    osDelay(20);
-	  }
+    prev = pressed;
+    osDelay(20);
+  }
   /* USER CODE END motor */
 }
 
@@ -637,33 +726,33 @@ void motor(void *argument)
 void encoder_task(void *argument)
 {
   /* USER CODE BEGIN encoder_task */
-  char buffer[32];
-  for(;;)
-  {
-    int32_t tL=0,tR=0,mL=0,mR=0;
-    control_get_target_and_measured(&tL, &tR, &mL, &mR);
-    int8_t oL=0,oR=0;
-    control_get_outputs(&oL, &oR);
-
-    OLED_Clear();
-
-    // Show left: Target/Measured
-    sprintf(buffer, "L T/M:%ld/%ld", tL, mL);
-    OLED_ShowString(0, 0, (uint8_t*)buffer);
-
-    // Show right: Target/Measured
-    sprintf(buffer, "R T/M:%ld/%ld", tR, mR);
-    OLED_ShowString(0, 16, (uint8_t*)buffer);
-
-    // Show PWM outputs (percent)
-    sprintf(buffer, "L PWM:%d", (int)oL);
-    OLED_ShowString(0, 32, (uint8_t*)buffer);
-    sprintf(buffer, "R PWM:%d", (int)oR);
-    OLED_ShowString(0, 48, (uint8_t*)buffer);
-
-    OLED_Refresh_Gram();
-    osDelay(100);
-  }
+//  char buffer[32];
+//  for(;;)
+//  {
+//    int32_t tL=0,tR=0,mL=0,mR=0;
+//    control_get_target_and_measured(&tL, &tR, &mL, &mR);
+//    int8_t oL=0,oR=0;
+//    control_get_outputs(&oL, &oR);
+//
+//    OLED_Clear();
+//
+//    // Show left: Target/Measured
+//    sprintf(buffer, "L T/M:%ld/%ld", tL, mL);
+//    OLED_ShowString(0, 0, (uint8_t*)buffer);
+//
+//    // Show right: Target/Measured
+//    sprintf(buffer, "R T/M:%ld/%ld", tR, mR);
+//    OLED_ShowString(0, 16, (uint8_t*)buffer);
+//
+//    // Show PWM outputs (percent)
+//    sprintf(buffer, "L PWM:%d", (int)oL);
+//    OLED_ShowString(0, 32, (uint8_t*)buffer);
+//    sprintf(buffer, "R PWM:%d", (int)oR);
+//    OLED_ShowString(0, 48, (uint8_t*)buffer);
+//
+//    OLED_Refresh_Gram();
+//    osDelay(100);
+//  }
   /* USER CODE END encoder_task */
 }
 
@@ -679,27 +768,94 @@ void controlTask(void *argument)
   /* USER CODE BEGIN controlTask */
   // Button-driven step sequence for tuning.
   // Sequence in ticks/10ms: 0 -> 10 -> 20 -> 0 -> -10 -> -20 -> 0 -> ...
-  const int32_t seq[] = {0, 10, 20, 0, -10, -20};
-  const uint32_t seq_len = sizeof(seq)/sizeof(seq[0]);
-  uint32_t idx = 0;
-
-  // Apply initial target
-  control_set_target_ticks_per_dt(seq[idx], seq[idx]);
-
-  uint8_t pressed_prev = user_is_pressed();
-
-  for(;;)
-  {
-    uint8_t pressed = user_is_pressed();
-    // On rising edge (not pressed -> pressed), advance step
-    if (!pressed_prev && pressed) {
-        idx = (idx + 1) % seq_len;
-        control_set_target_ticks_per_dt(seq[idx], seq[idx]);
-    }
-    pressed_prev = pressed;
-    osDelay(50);
-  }
+//  const int32_t seq[] = {0, 10, 20, 0, -10, -20};
+//  const uint32_t seq_len = sizeof(seq)/sizeof(seq[0]);
+//  uint32_t idx = 0;
+//
+//  // Apply initial target
+//  control_set_target_ticks_per_dt(seq[idx], seq[idx]);
+//
+//  uint8_t pressed_prev = user_is_pressed();
+//
+//  for(;;)
+//  {
+//    uint8_t pressed = user_is_pressed();
+//    // On rising edge (not pressed -> pressed), advance step
+//    if (!pressed_prev && pressed) {
+//        idx = (idx + 1) % seq_len;
+//        control_set_target_ticks_per_dt(seq[idx], seq[idx]);
+//    }
+//    pressed_prev = pressed;
+//    osDelay(50);
+//  }
   /* USER CODE END controlTask */
+}
+
+/* USER CODE BEGIN Header_servoTask */
+/**
+* @brief Function implementing the servo_Task thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_servoTask */
+void servoTask(void *argument)
+{
+  /* USER CODE BEGIN servoTask */
+  // Configure TIM8 CH1 for standard hobby servo testing
+  // MX_TIM8_Init configures Prescaler=319, Period=999 → 50 Hz PWM with 20 µs tick
+  // So tick_us = 20.0f; limits: 1000 µs (left), 1500 µs (center), 2000 µs (right)
+  Servo steer;
+  Servo_Attach(&g_steer, &htim8, TIM_CHANNEL_1, 20.0f, 1000, 1500, 2000);
+  if (Servo_Start(&g_steer) != HAL_OK) {
+    // If PWM start fails, halt this task
+    for(;;) { osDelay(1000); }
+  }
+
+  // Initial center
+  Servo_Center(&g_steer);
+  g_servo_ready = 1;
+  osDelay(1000);
+
+  /* Infinite test loop */
+  for(;;) {
+    // Step test using pulse widths
+    Servo_WriteUS(&g_steer, 1000); // left
+    osDelay(1000);
+    Servo_WriteUS(&g_steer, 1500); // center
+    osDelay(1000);
+    Servo_WriteUS(&g_steer, 2000); // right
+    osDelay(1000);
+
+    // Sweep using angle mapping (-100..+100)
+    for (int ang = -100; ang <= 100; ang += 10) {
+      Servo_WriteAngle(&g_steer, (float)ang);
+      osDelay(150);
+    }
+    for (int ang = 100; ang >= -100; ang -= 10) {
+      Servo_WriteAngle(&g_steer, (float)ang);
+      osDelay(150);
+    }
+
+    // Back to center, brief pause
+    Servo_Center(&g_steer);
+    osDelay(1000);
+  }
+  /* USER CODE END servoTask */
+}
+
+/* USER CODE BEGIN Header_userButtonTask */
+/**
+* @brief Function implementing the userButton_Task thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_userButtonTask */
+void userButtonTask(void *argument)
+{
+  /* USER CODE BEGIN userButtonTask */
+  // Behavior is handled in motor() to keep logic in one place
+  for(;;) { osDelay(200); }
+  /* USER CODE END userButtonTask */
 }
 
 /**
