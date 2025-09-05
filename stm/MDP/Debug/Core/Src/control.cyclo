@@ -1,0 +1,6 @@
+../Core/Src/control.c:40:6:control_init	1
+../Core/Src/control.c:55:6:control_set_target_ticks_per_dt	1
+../Core/Src/control.c:62:6:control_tick	2
+../Core/Src/control.c:97:6:HAL_TIM_PeriodElapsedCallback	2
+../Core/Src/control.c:104:6:control_get_target_and_measured	5
+../Core/Src/control.c:115:6:control_get_outputs	3
