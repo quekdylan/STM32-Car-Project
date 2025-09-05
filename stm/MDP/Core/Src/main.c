@@ -24,7 +24,6 @@
 /* USER CODE BEGIN Includes */
 #include "oled.h"
 #include "control.h"
-#include "motor.h"
 #include "userButton.h"
 #include "servo.h"
 /* USER CODE END Includes */
@@ -36,10 +35,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-// Approximate mapping from speed percent to encoder ticks per 10 ms for PID
-// Adjust SPEED_TICKS_100 to your robot after measuring at 100% open-loop.
-#define SPEED_TICKS_100   40   // example: ~40 ticks/10 ms at 100%
-#define SPEED_TICKS_20    (SPEED_TICKS_100 * 20 / 100)
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -90,17 +86,7 @@ const osThreadAttr_t servo_Task_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
-/* Definitions for userButton_Task */
-osThreadId_t userButton_TaskHandle;
-const osThreadAttr_t userButton_Task_attributes = {
-  .name = "userButton_Task",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityLow,
-};
 /* USER CODE BEGIN PV */
-// Shared servo instance so multiple tasks can reference it
-static Servo g_steer;
-static volatile uint8_t g_servo_ready = 0;
 
 /* USER CODE END PV */
 
@@ -118,7 +104,6 @@ void motor(void *argument);
 void encoder_task(void *argument);
 void controlTask(void *argument);
 void servoTask(void *argument);
-void userButtonTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -205,9 +190,6 @@ int main(void)
 
   /* creation of servo_Task */
   servo_TaskHandle = osThreadNew(servoTask, NULL, &servo_Task_attributes);
-
-  /* creation of userButton_Task */
-  userButton_TaskHandle = osThreadNew(userButtonTask, NULL, &userButton_Task_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -694,25 +676,44 @@ void StartDefaultTask(void *argument)
 void motor(void *argument)
 {
   /* USER CODE BEGIN motor */
-  uint8_t prev = user_is_pressed();
-  for(;;) {
-    uint8_t pressed = user_is_pressed();
+	uint8_t run_sequence = 0;
 
-    if (pressed) {
-      if (!prev && g_servo_ready) {
-        // Center servo on rising edge
-        Servo_Center(&g_steer);
-      }
-      // Drive both motors forward at 20% open-loop
-      motor_set_speeds(20, 20);
-    } else {
-      // Stop when released
-      motor_stop();
-    }
+	  for(;;)
+	  {
+	    if (user_is_pressed()) {
+	        run_sequence = 1;
+	    }
 
-    prev = pressed;
-    osDelay(20);
-  }
+	    if (run_sequence) {
+	        // Ramp up forward
+	        for (int8_t speed = 0; speed <= 100; speed += 5) {
+	            motor_set_speeds(speed, speed);
+	            osDelay(200);
+	        }
+	        // Ramp down forward
+	        for (int8_t speed = 100; speed >= 0; speed -= 5) {
+	            motor_set_speeds(speed, speed);
+	            osDelay(200);
+	        }
+
+	        osDelay(500); // Pause
+
+	        // Ramp up reverse
+	        for (int8_t speed = 0; speed >= -100; speed -= 5) {
+	            motor_set_speeds(speed, speed);
+	            osDelay(200);
+	        }
+	        // Ramp down reverse
+	        for (int8_t speed = -100; speed <= 0; speed += 5) {
+	            motor_set_speeds(speed, speed);
+	            osDelay(200);
+	        }
+
+	        motor_stop();
+	        run_sequence = 0; // Sequence finished, wait for next button press
+	    }
+	    osDelay(20);
+	  }
   /* USER CODE END motor */
 }
 
@@ -726,33 +727,33 @@ void motor(void *argument)
 void encoder_task(void *argument)
 {
   /* USER CODE BEGIN encoder_task */
-//  char buffer[32];
-//  for(;;)
-//  {
-//    int32_t tL=0,tR=0,mL=0,mR=0;
-//    control_get_target_and_measured(&tL, &tR, &mL, &mR);
-//    int8_t oL=0,oR=0;
-//    control_get_outputs(&oL, &oR);
-//
-//    OLED_Clear();
-//
-//    // Show left: Target/Measured
-//    sprintf(buffer, "L T/M:%ld/%ld", tL, mL);
-//    OLED_ShowString(0, 0, (uint8_t*)buffer);
-//
-//    // Show right: Target/Measured
-//    sprintf(buffer, "R T/M:%ld/%ld", tR, mR);
-//    OLED_ShowString(0, 16, (uint8_t*)buffer);
-//
-//    // Show PWM outputs (percent)
-//    sprintf(buffer, "L PWM:%d", (int)oL);
-//    OLED_ShowString(0, 32, (uint8_t*)buffer);
-//    sprintf(buffer, "R PWM:%d", (int)oR);
-//    OLED_ShowString(0, 48, (uint8_t*)buffer);
-//
-//    OLED_Refresh_Gram();
-//    osDelay(100);
-//  }
+  char buffer[32];
+  for(;;)
+  {
+    int32_t tL=0,tR=0,mL=0,mR=0;
+    control_get_target_and_measured(&tL, &tR, &mL, &mR);
+    int8_t oL=0,oR=0;
+    control_get_outputs(&oL, &oR);
+
+    OLED_Clear();
+
+    // Show left: Target/Measured
+    sprintf(buffer, "L T/M:%ld/%ld", tL, mL);
+    OLED_ShowString(0, 0, (uint8_t*)buffer);
+
+    // Show right: Target/Measured
+    sprintf(buffer, "R T/M:%ld/%ld", tR, mR);
+    OLED_ShowString(0, 16, (uint8_t*)buffer);
+
+    // Show PWM outputs (percent)
+    sprintf(buffer, "L PWM:%d", (int)oL);
+    OLED_ShowString(0, 32, (uint8_t*)buffer);
+    sprintf(buffer, "R PWM:%d", (int)oR);
+    OLED_ShowString(0, 48, (uint8_t*)buffer);
+
+    OLED_Refresh_Gram();
+    osDelay(100);
+  }
   /* USER CODE END encoder_task */
 }
 
@@ -768,26 +769,26 @@ void controlTask(void *argument)
   /* USER CODE BEGIN controlTask */
   // Button-driven step sequence for tuning.
   // Sequence in ticks/10ms: 0 -> 10 -> 20 -> 0 -> -10 -> -20 -> 0 -> ...
-//  const int32_t seq[] = {0, 10, 20, 0, -10, -20};
-//  const uint32_t seq_len = sizeof(seq)/sizeof(seq[0]);
-//  uint32_t idx = 0;
-//
-//  // Apply initial target
-//  control_set_target_ticks_per_dt(seq[idx], seq[idx]);
-//
-//  uint8_t pressed_prev = user_is_pressed();
-//
-//  for(;;)
-//  {
-//    uint8_t pressed = user_is_pressed();
-//    // On rising edge (not pressed -> pressed), advance step
-//    if (!pressed_prev && pressed) {
-//        idx = (idx + 1) % seq_len;
-//        control_set_target_ticks_per_dt(seq[idx], seq[idx]);
-//    }
-//    pressed_prev = pressed;
-//    osDelay(50);
-//  }
+  const int32_t seq[] = {0, 10, 20, 0, -10, -20};
+  const uint32_t seq_len = sizeof(seq)/sizeof(seq[0]);
+  uint32_t idx = 0;
+
+  // Apply initial target
+  control_set_target_ticks_per_dt(seq[idx], seq[idx]);
+
+  uint8_t pressed_prev = user_is_pressed();
+
+  for(;;)
+  {
+    uint8_t pressed = user_is_pressed();
+    // On rising edge (not pressed -> pressed), advance step
+    if (!pressed_prev && pressed) {
+        idx = (idx + 1) % seq_len;
+        control_set_target_ticks_per_dt(seq[idx], seq[idx]);
+    }
+    pressed_prev = pressed;
+    osDelay(50);
+  }
   /* USER CODE END controlTask */
 }
 
@@ -805,57 +806,41 @@ void servoTask(void *argument)
   // MX_TIM8_Init configures Prescaler=319, Period=999 → 50 Hz PWM with 20 µs tick
   // So tick_us = 20.0f; limits: 1000 µs (left), 1500 µs (center), 2000 µs (right)
   Servo steer;
-  Servo_Attach(&g_steer, &htim8, TIM_CHANNEL_1, 20.0f, 1000, 1500, 2000);
-  if (Servo_Start(&g_steer) != HAL_OK) {
+  Servo_Attach(&steer, &htim8, TIM_CHANNEL_1, 20.0f, 1000, 1500, 2100);
+  if (Servo_Start(&steer) != HAL_OK) {
     // If PWM start fails, halt this task
     for(;;) { osDelay(1000); }
   }
 
   // Initial center
-  Servo_Center(&g_steer);
-  g_servo_ready = 1;
+  Servo_Center(&steer);
   osDelay(1000);
 
   /* Infinite test loop */
   for(;;) {
     // Step test using pulse widths
-    Servo_WriteUS(&g_steer, 1000); // left
-    osDelay(1000);
-    Servo_WriteUS(&g_steer, 1500); // center
-    osDelay(1000);
-    Servo_WriteUS(&g_steer, 2000); // right
-    osDelay(1000);
+//    Servo_WriteUS(&steer, 1000); // left
+//    osDelay(1000);
+//    Servo_WriteUS(&steer, 1500); // center
+//    osDelay(1000);
+//    Servo_WriteUS(&steer, 2100); // right
+//    osDelay(1000);
 
     // Sweep using angle mapping (-100..+100)
-    for (int ang = -100; ang <= 100; ang += 10) {
-      Servo_WriteAngle(&g_steer, (float)ang);
-      osDelay(150);
-    }
-    for (int ang = 100; ang >= -100; ang -= 10) {
-      Servo_WriteAngle(&g_steer, (float)ang);
-      osDelay(150);
-    }
+//    for (int ang = -100; ang <= 100; ang += 10) {
+//      Servo_WriteAngle(&steer, (float)ang);
+//      osDelay(150);
+//    }
+//    for (int ang = 100; ang >= -100; ang -= 10) {
+//      Servo_WriteAngle(&steer, (float)ang);
+//      osDelay(150);
+//    }
 
     // Back to center, brief pause
-    Servo_Center(&g_steer);
+    Servo_Center(&steer);
     osDelay(1000);
   }
   /* USER CODE END servoTask */
-}
-
-/* USER CODE BEGIN Header_userButtonTask */
-/**
-* @brief Function implementing the userButton_Task thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_userButtonTask */
-void userButtonTask(void *argument)
-{
-  /* USER CODE BEGIN userButtonTask */
-  // Behavior is handled in motor() to keep logic in one place
-  for(;;) { osDelay(200); }
-  /* USER CODE END userButtonTask */
 }
 
 /**

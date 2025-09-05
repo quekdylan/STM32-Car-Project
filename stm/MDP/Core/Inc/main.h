@@ -73,6 +73,8 @@ void Error_Handler(void);
 #define OLED_SDA_GPIO_Port GPIOD
 #define OLED_SCL_Pin GPIO_PIN_14
 #define OLED_SCL_GPIO_Port GPIOD
+#define SERVO_Pin GPIO_PIN_6
+#define SERVO_GPIO_Port GPIOC
 #define ENCODER_A1_Pin GPIO_PIN_15
 #define ENCODER_A1_GPIO_Port GPIOA
 #define ENCODER_A2_Pin GPIO_PIN_3
