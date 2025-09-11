@@ -40,5 +40,10 @@ fp32 PID_calc_with_dt(pid_type_def *pid, fp32 input, fp32 target);
 
 void PID_clear(pid_type_def *pid);
 
+// PID Speed functions like friend's code
+void PID_SPEED_1(pid_type_def *pid, float angleNow, float *correction, int8_t dir, uint16_t *newDutyL, uint16_t *newDutyR);
+void PID_SPEED_2(pid_type_def *pid, float angleNow, float *correction, int8_t dir, uint16_t *newDutyL, uint16_t *newDutyR);
+void PID_SPEED_T(pid_type_def *pid, float angleNow, float *correction, int8_t dir, uint16_t *newDutyL, uint16_t *newDutyR);
+
 #endif // PID_H
 

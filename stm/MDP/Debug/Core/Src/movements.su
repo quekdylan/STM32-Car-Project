@@ -1,0 +1,4 @@
+../Core/Src/movements.c:40:6:move_start_straight	40	static
+../Core/Src/movements.c:62:6:move_abort	8	static
+../Core/Src/movements.c:68:9:move_is_active	4	static
+../Core/Src/movements.c:74:6:move_tick_100Hz	40	static

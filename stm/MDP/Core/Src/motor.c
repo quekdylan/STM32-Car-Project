@@ -23,48 +23,53 @@ void motor_init(void) {
 }
 
 void motor_set_speeds(int8_t left_speed_percent, int8_t right_speed_percent) {
-    if (left_speed_percent > 100) left_speed_percent = 100;
-    if (left_speed_percent < -100) left_speed_percent = -100;
+    if (left_speed_percent > 100)  left_speed_percent  = 100;
+    if (left_speed_percent < -100) left_speed_percent  = -100;
     if (right_speed_percent > 100) right_speed_percent = 100;
-    if (right_speed_percent < -100) right_speed_percent = -100;
+    if (right_speed_percent < -100)right_speed_percent = -100;
 
-    uint32_t arr = __HAL_TIM_GET_AUTORELOAD(&htim4);
+    // Use each timer’s own ARR
+    const uint32_t arrL = __HAL_TIM_GET_AUTORELOAD(&htim4); // TIM4 (Left)
+    const uint32_t arrR = __HAL_TIM_GET_AUTORELOAD(&htim9); // TIM9 (Right)
 
-    // --- Left Motor (Motor A on TIM4) ---
-    if (left_speed_percent == 0) {
-        __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_4, 0);
-        __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_3, 0);
-    } else {
-        float scaled_speed = MIN_MOTOR_SPEED_PERCENT + (fabsf((float)left_speed_percent) / 100.0f) * (100.0f - MIN_MOTOR_SPEED_PERCENT);
-        uint32_t pulse = (uint32_t)(scaled_speed * (arr + 1) / 100.0f);
-
-        if (left_speed_percent > 0) {
-            __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_4, pulse);
+        // --- Left Motor (TIM4) ---
+        if (left_speed_percent == 0) {
+            __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_4, 0);
             __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_3, 0);
         } else {
-            __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_4, 0);
-            __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_3, pulse);
+            float scaled_speedL = MIN_MOTOR_SPEED_PERCENT
+                                + (fabsf((float)left_speed_percent) / 100.0f) * (100.0f - MIN_MOTOR_SPEED_PERCENT);
+            uint32_t pulseL = (uint32_t)(scaled_speedL * (arrL + 1) / 100.0f);
+    
+            if (left_speed_percent > 0) {           // Forward
+                __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_4, pulseL); // IN1 = PWM
+                __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_3, 0);      // IN2 = 0
+            } else {                                  // Reverse
+                __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_4, 0);      // IN1 = 0
+                __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_3, pulseL); // IN2 = PWM
+            }
+        }
+    
+        // --- Right Motor (TIM9) ---
+        if (right_speed_percent == 0) {
+            __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_1, 0);
+            __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_2, 0);
+        } else {
+            float scaled_speedR = MIN_MOTOR_SPEED_PERCENT
+                                + (fabsf((float)right_speed_percent) / 100.0f) * (100.0f - MIN_MOTOR_SPEED_PERCENT);
+            uint32_t pulseR = (uint32_t)(scaled_speedR * (arrR + 1) / 100.0f);
+    
+            // Your mapping shows right motor wiring reversed; keep your chosen convention:
+            if (right_speed_percent > 0) {            // Forward
+                __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_1, 0);      // IN1 = 0
+                __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_2, pulseR); // IN2 = PWM
+            } else {                                   // Reverse
+                __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_1, pulseR); // IN1 = PWM
+                __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_2, 0);      // IN2 = 0
+            }
         }
     }
 
-    // --- Right Motor (Motor B on TIM9) ---
-    if (right_speed_percent == 0) {
-        __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_1, 0);
-        __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_2, 0);
-    } else {
-        float scaled_speed = MIN_MOTOR_SPEED_PERCENT + (fabsf((float)right_speed_percent) / 100.0f) * (100.0f - MIN_MOTOR_SPEED_PERCENT);
-        uint32_t pulse = (uint32_t)(scaled_speed * (arr + 1) / 100.0f);
-
-        // ** MODIFIED LOGIC FOR MOTOR B DIRECTION **
-        if (right_speed_percent > 0) { // Forward
-            __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_1, 0);     // IN1 = 0
-            __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_2, pulse); // IN2 = PWM
-        } else { // Reverse
-            __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_1, pulse); // IN1 = PWM
-            __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_2, 0);     // IN2 = 0
-        }
-    }
-}
 
 void motor_stop(void) {
     __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_3, 0);

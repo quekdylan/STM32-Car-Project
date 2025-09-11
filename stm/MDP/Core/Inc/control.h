@@ -22,6 +22,15 @@ void control_get_target_and_measured(int32_t *t_left,
 // Get last PWM outputs (percent -100..100) applied to motors
 void control_get_outputs(int8_t *out_left, int8_t *out_right);
 
+// Check if control step is due (100 Hz timing)
+uint8_t control_is_due(void);
+
+// Clear the control due flag
+void control_clear_due(void);
+
+// Run one control step (encoders -> PID -> PWM)
+void control_step(void);
+
 /*
 Tuning notes (what you need to set):
 - Gains: start with KP=2.0, KI=0.5, KD=0.01 for 100 Hz; then tune.

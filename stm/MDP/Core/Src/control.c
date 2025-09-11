@@ -37,6 +37,12 @@ static int32_t last_left_counts = 0;
 static int32_t last_right_counts = 0;
 static uint8_t first_sample = 1;
 
+// Foreground scheduling flag: set by TIM5 ISR, consumed in main loop/task
+static volatile uint8_t control_due = 0;
+
+uint8_t control_is_due(void) { return control_due; }
+void control_clear_due(void) { control_due = 0; }
+
 void control_init(void)
 {
     const fp32 gains[3] = { PID_KP, PID_KI, PID_KD };
@@ -59,7 +65,7 @@ void control_set_target_ticks_per_dt(int32_t left_ticks, int32_t right_ticks)
 }
 
 // Runs at 100 Hz from TIM5 ISR
-void control_tick(void)
+void control_step(void)
 {
     // Measure delta counts every 10 ms
     int32_t cur_left = motor_get_left_encoder_counts();
@@ -97,7 +103,7 @@ void control_tick(void)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim->Instance == TIM5) {
-        control_tick();   // run PID every 10 ms
+        control_due = 1;   // signal foreground to run control_step() at 100 Hz
     }
 }
 

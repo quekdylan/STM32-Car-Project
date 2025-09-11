@@ -26,6 +26,14 @@
 #include "control.h"
 #include "userButton.h"
 #include "servo.h"
+#include "ICM20948.h"
+#include "motor.h"
+#include "pid.h"
+#include "movements.h"
+
+#include <stdio.h>   // for snprintf
+#include <math.h>    // for fabs
+#include "imu.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -44,6 +52,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+I2C_HandleTypeDef hi2c2;
+
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
@@ -86,7 +96,17 @@ const osThreadAttr_t servo_Task_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
+/* Definitions for userButton_Task */
+osThreadId_t userButton_TaskHandle;
+const osThreadAttr_t userButton_Task_attributes = {
+  .name = "userButton_Task",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* USER CODE BEGIN PV */
+// Global servo object for use by defaultTask
+Servo global_steer;
+
 
 /* USER CODE END PV */
 
@@ -99,11 +119,13 @@ static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_TIM5_Init(void);
 static void MX_TIM8_Init(void);
+static void MX_I2C2_Init(void);
 void StartDefaultTask(void *argument);
 void motor(void *argument);
 void encoder_task(void *argument);
 void controlTask(void *argument);
 void servoTask(void *argument);
+void userButtonTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -149,11 +171,20 @@ int main(void)
   MX_TIM3_Init();
   MX_TIM5_Init();
   MX_TIM8_Init();
+  MX_I2C2_Init();
   /* USER CODE BEGIN 2 */
-  OLED_Init();
-  motor_init();
-  // Start 100 Hz control loop
-  control_init();
+OLED_Init();
+motor_init();          // Initialize motors (PWM + encoders)
+control_init();        // Start 100 Hz control loop tick (TIM5 or similar)
+
+// Initialize IMU (detects 0x68/0x69, sets 2000 dps, calibrates bias)
+uint8_t icm_addrSel = 0;
+imu_init(&hi2c2, &icm_addrSel);
+
+// (Optional) show which address was used on OLED/UART
+
+// Initialize movements module (if you use it)
+
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -190,6 +221,9 @@ int main(void)
 
   /* creation of servo_Task */
   servo_TaskHandle = osThreadNew(servoTask, NULL, &servo_Task_attributes);
+
+  /* creation of userButton_Task */
+  userButton_TaskHandle = osThreadNew(userButtonTask, NULL, &userButton_Task_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -256,6 +290,40 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief I2C2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C2_Init(void)
+{
+
+  /* USER CODE BEGIN I2C2_Init 0 */
+
+  /* USER CODE END I2C2_Init 0 */
+
+  /* USER CODE BEGIN I2C2_Init 1 */
+
+  /* USER CODE END I2C2_Init 1 */
+  hi2c2.Instance = I2C2;
+  hi2c2.Init.ClockSpeed = 100000;
+  hi2c2.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c2.Init.OwnAddress1 = 0;
+  hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c2.Init.OwnAddress2 = 0;
+  hi2c2.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c2.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C2_Init 2 */
+
+  /* USER CODE END I2C2_Init 2 */
+
 }
 
 /**
@@ -609,10 +677,10 @@ static void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, GPIO_PIN_RESET);
@@ -646,6 +714,20 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+/* USER CODE BEGIN PV */
+// UI helpers for progress display
+static volatile uint8_t  g_move_active = 0;
+static float             g_target_cm = 0.0f;
+static int32_t           g_left_start = 0;
+static int32_t           g_target_ticks = 0;
+static speed_mode_t      g_speedMode = SPEED_MODE_1;
+extern volatile int32_t g_move_target_left_ticks; // set this when you start a straight move
+
+// Encoder conversion for your setup (6.6 cm wheel, 330 PPR, x2 edges = 660 counts/rev)
+static const float WHEEL_CIRC_CM   = 3.1415926f * 6.6f;         // ≈ 20.735 cm
+static const float COUNTS_PER_REV  = 1320.0f;                    // rising-edge x2
+static const float TICKS_PER_CM    = COUNTS_PER_REV / WHEEL_CIRC_CM; // ≈ 31.8
+/* USER CODE END PV */
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -658,11 +740,8 @@ static void MX_GPIO_Init(void)
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+  // Idle: default task unused per request
+  for(;;) { osDelay(1000); }
   /* USER CODE END 5 */
 }
 
@@ -676,44 +755,88 @@ void StartDefaultTask(void *argument)
 void motor(void *argument)
 {
   /* USER CODE BEGIN motor */
-	uint8_t run_sequence = 0;
+  // Simple sequence in MotorTask with IMU + PID1 correction:
+  // wait button → go straight 50 cm with gyro correction → servo right turn → center
 
-	  for(;;)
-	  {
-	    if (user_is_pressed()) {
-	        run_sequence = 1;
-	    }
+  // Initialize servo on TIM8 CH1 (50 Hz, 20 µs tick, 1000-1500-2300 µs limits)
+  Servo_Attach(&global_steer, &htim8, TIM_CHANNEL_1, 20.0f, 1000, 1500, 2300);
+  if (Servo_Start(&global_steer) != HAL_OK) {
+    for(;;) { osDelay(1000); }
+  }
+  Servo_Center(&global_steer);
 
-	    if (run_sequence) {
-	        // Ramp up forward
-	        for (int8_t speed = 0; speed <= 100; speed += 5) {
-	            motor_set_speeds(speed, speed);
-	            osDelay(200);
-	        }
-	        // Ramp down forward
-	        for (int8_t speed = 100; speed >= 0; speed -= 5) {
-	            motor_set_speeds(speed, speed);
-	            osDelay(200);
-	        }
+  // PID config (only Kp used in PID_SPEED_1)
+  pid_type_def pidStraight = {0};
+  pidStraight.Kp = 2.0f; // tune 2.0 ~ 6.0 as needed
 
-	        osDelay(500); // Pause
+  // Button edge detector
+  uint8_t prev = 0;
 
-	        // Ramp up reverse
-	        for (int8_t speed = 0; speed >= -100; speed -= 5) {
-	            motor_set_speeds(speed, speed);
-	            osDelay(200);
-	        }
-	        // Ramp down reverse
-	        for (int8_t speed = -100; speed <= 0; speed += 5) {
-	            motor_set_speeds(speed, speed);
-	            osDelay(200);
-	        }
+  for(;;) {
+    uint8_t now = user_is_pressed();
+    if (!prev && now) {
+      // 1) Go straight for 50 cm with gyro correction
+      const float target_cm = 150.0f;
+      const int32_t target_ticks = (int32_t)(target_cm * TICKS_PER_CM + 0.5f);
 
-	        motor_stop();
-	        run_sequence = 0; // Sequence finished, wait for next button press
-	    }
-	    osDelay(20);
-	  }
+      // Reset encoders and yaw reference
+      motor_reset_encoders();
+      imu_zero_yaw();
+
+      // 100 Hz control loop while approaching distance target
+      uint32_t last10 = HAL_GetTick();
+      uint32_t t0 = last10;
+
+      while (1) {
+        // Distance check
+        int32_t left = motor_get_left_encoder_counts();
+        if (left >= target_ticks) break;
+        if ((uint32_t)(HAL_GetTick() - t0) > 7000U) break; // safety timeout ~7s
+
+        // Run at ~100 Hz
+        uint32_t nowMs = HAL_GetTick();
+        if ((uint32_t)(nowMs - last10) >= 10U) {
+          last10 += 10U;
+
+          // Update integrated yaw (deg)
+          imu_update_yaw_100Hz();
+          float angleNow = -imu_get_yaw(); // target = 0 (sign flipped)
+
+          // Compute PWM duties using PID_SPEED_1 (base around ~490)
+          float correction = 0.0f;
+          uint16_t dutyL = 0, dutyR = 0;
+          int8_t dir = +1; // forward
+          PID_SPEED_1(&pidStraight, angleNow, &correction, dir, &dutyL, &dutyR);
+
+          // Apply as forward drive on both motors using raw PWM counts
+          // Left (TIM4): forward = CH4=pulse, CH3=0
+          __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_4, dutyL);
+          __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_3, 0);
+          // Right (TIM9): forward = CH1=0, CH2=pulse (board wiring is reversed)
+          __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_1, 0);
+          __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_2, dutyR);
+        }
+
+        osDelay(1);
+      }
+
+      // stop motors
+      motor_stop();
+      osDelay(200);
+
+      // 2) Turn right using servo steering: steer right and drive forward briefly
+      Servo_WriteAngle(&global_steer, +95.0f); // full right
+      motor_set_speeds(20, 25);
+      osDelay(1000); // drive for 1s while steering right
+      motor_stop();
+      Servo_Center(&global_steer);
+
+      // Debounce: wait for button release before accepting next run
+      while (user_is_pressed()) { osDelay(20); }
+    }
+    prev = now;
+    osDelay(20);
+  }
   /* USER CODE END motor */
 }
 
@@ -727,7 +850,7 @@ void motor(void *argument)
 void encoder_task(void *argument)
 {
   /* USER CODE BEGIN encoder_task */
-  char buffer[32];
+  // char buffer[32];  // Unused variable removed
   for(;;)
   {
     int32_t tL=0,tR=0,mL=0,mR=0;
@@ -735,24 +858,27 @@ void encoder_task(void *argument)
     int8_t oL=0,oR=0;
     control_get_outputs(&oL, &oR);
 
-    OLED_Clear();
 
-    // Show left: Target/Measured
-    sprintf(buffer, "L T/M:%ld/%ld", tL, mL);
-    OLED_ShowString(0, 0, (uint8_t*)buffer);
+    // OLED_Clear();
 
-    // Show right: Target/Measured
-    sprintf(buffer, "R T/M:%ld/%ld", tR, mR);
-    OLED_ShowString(0, 16, (uint8_t*)buffer);
+    // // Show left: Target/Measured
+    // sprintf(buffer, "L T/M:%ld/%ld", tL, mL);
+    // OLED_ShowString(0, 0, (uint8_t*)buffer);
 
-    // Show PWM outputs (percent)
-    sprintf(buffer, "L PWM:%d", (int)oL);
-    OLED_ShowString(0, 32, (uint8_t*)buffer);
-    sprintf(buffer, "R PWM:%d", (int)oR);
-    OLED_ShowString(0, 48, (uint8_t*)buffer);
+    // // Show right: Target/Measured
+    // sprintf(buffer, "R T/M:%ld/%ld", tR, mR);
+    // OLED_ShowString(0, 16, (uint8_t*)buffer);
 
-    OLED_Refresh_Gram();
-    osDelay(100);
+    // // Show PWM outputs (percent)
+    // sprintf(buffer, "L PWM:%d", (int)oL);
+    // OLED_ShowString(0, 32, (uint8_t*)buffer);
+    // sprintf(buffer, "R PWM:%d", (int)oR);
+    // OLED_ShowString(0, 48, (uint8_t*)buffer);
+
+  
+
+    // OLED_Refresh_Gram();
+    // osDelay(100);
   }
   /* USER CODE END encoder_task */
 }
@@ -767,31 +893,10 @@ void encoder_task(void *argument)
 void controlTask(void *argument)
 {
   /* USER CODE BEGIN controlTask */
-  // Button-driven step sequence for tuning.
-  // Sequence in ticks/10ms: 0 -> 10 -> 20 -> 0 -> -10 -> -20 -> 0 -> ...
-  const int32_t seq[] = {0, 10, 20, 0, -10, -20};
-  const uint32_t seq_len = sizeof(seq)/sizeof(seq[0]);
-  uint32_t idx = 0;
-
-  // Apply initial target
-  control_set_target_ticks_per_dt(seq[idx], seq[idx]);
-
-  uint8_t pressed_prev = user_is_pressed();
-
-  for(;;)
-  {
-    uint8_t pressed = user_is_pressed();
-    // On rising edge (not pressed -> pressed), advance step
-    if (!pressed_prev && pressed) {
-        idx = (idx + 1) % seq_len;
-        control_set_target_ticks_per_dt(seq[idx], seq[idx]);
-    }
-    pressed_prev = pressed;
-    osDelay(50);
-  }
+  // Not used for this test scenario
+  for(;;) { osDelay(50); }
   /* USER CODE END controlTask */
 }
-
 /* USER CODE BEGIN Header_servoTask */
 /**
 * @brief Function implementing the servo_Task thread.
@@ -802,45 +907,27 @@ void controlTask(void *argument)
 void servoTask(void *argument)
 {
   /* USER CODE BEGIN servoTask */
-  // Configure TIM8 CH1 for standard hobby servo testing
-  // MX_TIM8_Init configures Prescaler=319, Period=999 → 50 Hz PWM with 20 µs tick
-  // So tick_us = 20.0f; limits: 1000 µs (left), 1500 µs (center), 2000 µs (right)
-  Servo steer;
-  Servo_Attach(&steer, &htim8, TIM_CHANNEL_1, 20.0f, 1000, 1500, 2100);
-  if (Servo_Start(&steer) != HAL_OK) {
-    // If PWM start fails, halt this task
-    for(;;) { osDelay(1000); }
-  }
-
-  // Initial center
-  Servo_Center(&steer);
-  osDelay(1000);
-
-  /* Infinite test loop */
-  for(;;) {
-    // Step test using pulse widths
-//    Servo_WriteUS(&steer, 1000); // left
-//    osDelay(1000);
-//    Servo_WriteUS(&steer, 1500); // center
-//    osDelay(1000);
-//    Servo_WriteUS(&steer, 2100); // right
-//    osDelay(1000);
-
-    // Sweep using angle mapping (-100..+100)
-//    for (int ang = -100; ang <= 100; ang += 10) {
-//      Servo_WriteAngle(&steer, (float)ang);
-//      osDelay(150);
-//    }
-//    for (int ang = 100; ang >= -100; ang -= 10) {
-//      Servo_WriteAngle(&steer, (float)ang);
-//      osDelay(150);
-//    }
-
-    // Back to center, brief pause
-    Servo_Center(&steer);
-    osDelay(1000);
-  }
+  // Unused. Servo is controlled from MotorTask for this simple scenario.
+  for(;;) { osDelay(1000); }
   /* USER CODE END servoTask */
+}
+
+/* USER CODE BEGIN Header_userButtonTask */
+/**
+* @brief Function implementing the userButton_Task thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_userButtonTask */
+void userButtonTask(void *argument)
+{
+  /* USER CODE BEGIN userButtonTask */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END userButtonTask */
 }
 
 /**
