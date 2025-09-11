@@ -1,10 +1,20 @@
 <resources>
-    <string name="app_name">CloneMDP</string>
-    <string name="connect">Connect</string>
-    <string name="chat">Chat</string>
-    <string name="chat_screen">This is a Chat Screen!</string>
-    <string name="connect_screen">This is a Connect Screen!</string>
-    <string name="bluetooth_switch">Bluetooth On/Off</string>
-    <string name="make_discoverable">Make Discoverable</string>
-    <string name="scan">Scan</string>
+    <string name="app_name">MDPApp</string>
+    <string name="bluetooth_on_off">Bluetooth On/Off</string>
+    <string name="make_device_discoverable">Make Device Discoverable</string>
+    <string name="scan_nearby_devices">Scan Nearby Devices</string>
+    <string name="connected_devices">Connected Devices:</string>
+    <string name="nearby_devices">Nearby Devices:</string>
+    <string name="paired_devices">Paired Devices:</string>
+    <string name="open_chat">Open Chat</string>
+    <string name="type_message">Type a message…</string>
+    <string name="clear">Clear</string>
+    <string name="send">Send</string>
+    <string name="forward">MOVE FORWARD</string>
+    <string name="turn_left">TURN LEFT</string>
+    <string name="turn_right">TURN RIGHT</string>
+    <string name="reverse">REVERSE</string>
+    <string name="robot_status_label">Robot Status</string>
+    <string name="robot_status_unknown">Unknown</string>
+    <string name="open_arena">Go to Arena</string>
 </resources>

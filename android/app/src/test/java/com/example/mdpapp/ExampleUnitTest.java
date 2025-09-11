@@ -1,4 +1,4 @@
-package com.example.clonemdp;
+package com.example.mdpapp;
 
 import org.junit.Test;
 

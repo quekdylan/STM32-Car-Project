@@ -1,23 +1,89 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/main"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:layout_gravity="center">
+    android:padding="16dp">
 
-
-    <Button
-        android:id="@+id/btnConnect"
+    <!--Bluetooth Toggle-->
+    <Switch
+        android:id="@+id/switchBluetooth"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="@string/connect" />
+        android:text="@string/bluetooth_on_off"
+        tools:ignore="UseSwitchCompatOrMaterialXml" />
 
+    <!--Make Device Discoverable Button-->
     <Button
-        android:id="@+id/btnChat"
+        android:id="@+id/btnDiscoverable"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="@string/chat" />
+        android:text="@string/make_device_discoverable" />
+
+    <!--Scan Button-->
+    <Button
+        android:id="@+id/btnScan"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/scan_nearby_devices" />
+
+    <!--Connected Devices List-->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/connected_devices"
+        android:paddingTop="8dp"/>
+
+    <ListView
+        android:id="@+id/listConnectedDevices"
+        android:layout_width="match_parent"
+        android:layout_height="150dp"
+        android:background="#EEEEEE"/>
+
+    <!--Paired Devices List-->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/paired_devices"
+        android:paddingTop="8dp"/>
+
+    <ListView
+        android:id="@+id/listPairedDevices"
+        android:layout_width="match_parent"
+        android:layout_height="150dp"
+        android:background="#EEEEEE"/>
+
+    <!--Nearby Devices List-->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/nearby_devices"
+        android:paddingTop="8dp"/>
+
+    <ListView
+        android:id="@+id/listNearbyDevices"
+        android:layout_width="match_parent"
+        android:layout_height="150dp"
+        android:background="#EEEEEE"/>
+
+    <!--Go to Chat Screen-->
+    <Button
+    android:id="@+id/btnChat"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:text="@string/open_chat"
+    android:layout_marginTop="48dp"
+    android:layout_gravity="center" />
+
+    <!--Go to Arena Screen-->
+    <Button
+        android:id="@+id/btnArena"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/open_arena"
+        android:layout_marginTop="48dp"
+        android:layout_gravity="center" />
 
 
 

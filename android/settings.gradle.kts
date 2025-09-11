@@ -19,6 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "CloneMDP"
+rootProject.name = "MDPApp"
 include(":app")
- 

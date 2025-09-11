@@ -1,65 +1,111 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/chatLayout"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="16dp"
-    android:background="#FFFFFF">
-
-    <!-- Chat messages display -->
-    <ScrollView
+    android:padding="16dp"> <!-- Received Messages -->
+    <TextView
+        android:id="@+id/tvMessages"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:fillViewport="true"
-        android:background="#EEEEEE">
-
-        <TextView
-            android:id="@+id/textViewChat"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:padding="8dp"
-            android:textColor="#000000"
-            android:textSize="16sp" />
-    </ScrollView>
-
-    <!-- Input row: Editable text + Send + Clear buttons -->
-    <LinearLayout
+        android:layout_height="200dp"
+        android:background="#EEEEEE"
+        android:overScrollMode="always"
+        android:padding="8dp"
+        android:scrollbars="vertical"
+        android:text=""
+        android:textSize="16sp" /> <!-- Message Input -->
+    <EditText
+        android:id="@+id/etMessage"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginTop="8dp">
+        android:autofillHints="@string/type_message"
+        android:hint="@string/type_message"
+        android:inputType="text" /> <!-- Buttons -->
+    <LinearLayout
+        style="?android:attr/buttonBarStyle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="end"
+        android:orientation="horizontal">
 
-        <!-- Editable text -->
-        <EditText
-            android:id="@+id/editTextMessage"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="2"
-            android:hint="Type your message"
-            android:padding="8dp"
-            android:background="@android:drawable/edit_text"
-            android:textColor="#000000"
-            android:textSize="16sp" />
-
-        <!-- Send button -->
-        <Button
-            android:id="@+id/btnSend"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Send"
-            android:layout_marginStart="8dp" />
-
-        <!-- Clear button -->
         <Button
             android:id="@+id/btnClear"
-            android:layout_width="0dp"
+            style="?android:attr/buttonBarButtonStyle"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Clear"
-            android:layout_marginStart="8dp" />
+            android:text="@string/clear" />
+
+        <Button
+            android:id="@+id/btnSend"
+            style="?android:attr/buttonBarButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:text="@string/send" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <Button
+            android:id="@+id/btnForward"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/forward" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnLeft"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/turn_left" />
+
+            <Button
+                android:id="@+id/btnRight"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/turn_right" />
+
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btnReverse"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/reverse" />
+
+       <LinearLayout
+           android:layout_width="match_parent"
+           android:layout_height="match_parent"
+           android:orientation="vertical"
+           android:padding="8dp">
+
+           <TextView
+               android:id="@+id/tvStatusLabel"
+               android:layout_width="wrap_content"
+               android:layout_height="wrap_content"
+               android:text="@string/robot_status_label"
+               android:textSize="16sp"
+               android:textStyle="bold"/>
+
+           <TextView
+               android:id="@+id/tvRobotStatus"
+               android:layout_width="match_parent"
+               android:layout_height="wrap_content"
+               android:text="@string/robot_status_unknown"
+               android:textSize="18sp"
+               android:padding="8dp"
+               android:background="#EEE"/>
+
+       </LinearLayout>
     </LinearLayout>
 
 </LinearLayout>

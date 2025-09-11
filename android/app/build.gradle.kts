@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.clonemdp"
+    namespace = "com.example.mdpapp"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.clonemdp"
+        applicationId = "com.example.mdpapp"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
