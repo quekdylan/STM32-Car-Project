@@ -1,4 +1,4 @@
-package com.example.mdpapp;
+package com.example.mdpapp.services;
 
 import android.Manifest;
 import android.app.Service;

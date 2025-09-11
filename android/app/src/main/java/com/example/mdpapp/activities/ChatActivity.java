@@ -1,4 +1,4 @@
-package com.example.mdpapp;
+package com.example.mdpapp.activities;
 
 import android.content.ComponentName;
 import android.content.Intent;
@@ -12,6 +12,9 @@ import android.widget.Toast;
 import android.util.Log;
 
 import androidx.appcompat.app.AppCompatActivity;
+
+import com.example.mdpapp.R;
+import com.example.mdpapp.services.BluetoothService;
 
 import org.json.JSONObject;
 

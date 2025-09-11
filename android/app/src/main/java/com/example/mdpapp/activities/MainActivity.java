@@ -1,4 +1,4 @@
-package com.example.mdpapp;
+package com.example.mdpapp.activities;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
@@ -27,6 +27,9 @@ import androidx.annotation.RequiresPermission;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+
+import com.example.mdpapp.R;
+import com.example.mdpapp.services.BluetoothService;
 
 import java.util.ArrayList;
 import java.util.Set;
