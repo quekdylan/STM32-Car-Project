@@ -32,6 +32,7 @@
 #include "movements.h"
 
 #include <stdio.h>   // for snprintf
+#include <string.h>  // for strlen
 #include <math.h>    // for fabs
 #include "imu.h"
 /* USER CODE END Includes */
@@ -60,6 +61,8 @@ TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim5;
 TIM_HandleTypeDef htim8;
 TIM_HandleTypeDef htim9;
+
+UART_HandleTypeDef huart3;
 
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -120,6 +123,7 @@ static void MX_TIM3_Init(void);
 static void MX_TIM5_Init(void);
 static void MX_TIM8_Init(void);
 static void MX_I2C2_Init(void);
+static void MX_USART3_UART_Init(void);
 void StartDefaultTask(void *argument);
 void motor(void *argument);
 void encoder_task(void *argument);
@@ -133,6 +137,8 @@ void userButtonTask(void *argument);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+// UART3 RX byte buffer (interrupt-driven)
+static uint8_t uart3_rx_byte = 0;
 
 /* USER CODE END 0 */
 
@@ -172,6 +178,7 @@ int main(void)
   MX_TIM5_Init();
   MX_TIM8_Init();
   MX_I2C2_Init();
+  MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
 OLED_Init();
 motor_init();          // Initialize motors (PWM + encoders)
@@ -181,9 +188,12 @@ control_init();        // Start 100 Hz control loop tick (TIM5 or similar)
 uint8_t icm_addrSel = 0;
 imu_init(&hi2c2, &icm_addrSel);
 
-// (Optional) show which address was used on OLED/UART
+// Arm UART3 RX interrupt and send hello to RPi
+HAL_UART_Receive_IT(&huart3, &uart3_rx_byte, 1);   // arm RX
+const char *hello = "USART3 ready with interrupts\r\n";
+HAL_UART_Transmit(&huart3, (uint8_t*)hello, strlen(hello), 100);
 
-// Initialize movements module (if you use it)
+// (Optional) show which address was used on OLED/UART
 
   /* USER CODE END 2 */
 
@@ -664,6 +674,39 @@ static void MX_TIM9_Init(void)
 }
 
 /**
+  * @brief USART3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART3_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART3_Init 0 */
+
+  /* USER CODE END USART3_Init 0 */
+
+  /* USER CODE BEGIN USART3_Init 1 */
+
+  /* USER CODE END USART3_Init 1 */
+  huart3.Instance = USART3;
+  huart3.Init.BaudRate = 115200;
+  huart3.Init.WordLength = UART_WORDLENGTH_8B;
+  huart3.Init.StopBits = UART_STOPBITS_1;
+  huart3.Init.Parity = UART_PARITY_NONE;
+  huart3.Init.Mode = UART_MODE_TX_RX;
+  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART3_Init 2 */
+
+  /* USER CODE END USART3_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -717,18 +760,28 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN PV */
 // UI helpers for progress display
 static volatile uint8_t  g_move_active = 0;
-static float             g_target_cm = 0.0f;
-static int32_t           g_left_start = 0;
-static int32_t           g_target_ticks = 0;
-static speed_mode_t      g_speedMode = SPEED_MODE_1;
 extern volatile int32_t g_move_target_left_ticks; // set this when you start a straight move
 
 // Encoder conversion for your setup (6.6 cm wheel, 330 PPR, x2 edges = 660 counts/rev)
-static const float WHEEL_CIRC_CM   = 3.1415926f * 6.6f;         // ≈ 20.735 cm
-static const float COUNTS_PER_REV  = 1320.0f;                    // rising-edge x2
+static const float WHEEL_CIRC_CM   = 3.1415926f * 6.7f;         // ≈ 20.735 cm
+static const float COUNTS_PER_REV  = 660.0f;                    // rising-edge x2
 static const float TICKS_PER_CM    = COUNTS_PER_REV / WHEEL_CIRC_CM; // ≈ 31.8
 /* USER CODE END PV */
 /* USER CODE END 4 */
+
+/* USER CODE BEGIN 4 UART */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+  if (huart->Instance == USART3)
+  {
+    // Echo received byte back to Pi
+    HAL_UART_Transmit(&huart3, &uart3_rx_byte, 1, 10);
+
+    // Re-arm receive for next byte
+    HAL_UART_Receive_IT(&huart3, &uart3_rx_byte, 1);
+  }
+}
+/* USER CODE END 4 UART */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
 /**
@@ -767,10 +820,10 @@ void motor(void *argument)
 
   // PID config (only Kp used in PID_SPEED_1)
   pid_type_def pidStraight = {0};
-  pidStraight.Kp = 2.0f; // tune 2.0 ~ 6.0 as needed
+  pidStraight.Kp = 6.0f; // stronger correction; adjust if oscillation
 
-  // Button edge detector
-  uint8_t prev = 0;
+  // Button edge detector (use helper that returns 1 when pressed)
+  uint8_t prev = user_is_pressed();
 
   for(;;) {
     uint8_t now = user_is_pressed();
@@ -800,13 +853,13 @@ void motor(void *argument)
 
           // Update integrated yaw (deg)
           imu_update_yaw_100Hz();
-          float angleNow = -imu_get_yaw(); // target = 0 (sign flipped)
+          float angleNow = -imu_get_yaw(); // flipped sign to match steering polarity
 
-          // Compute PWM duties using PID_SPEED_1 (base around ~490)
+          // Compute PWM duties using PID_SPEED_2 (higher base around ~520)
           float correction = 0.0f;
           uint16_t dutyL = 0, dutyR = 0;
           int8_t dir = +1; // forward
-          PID_SPEED_1(&pidStraight, angleNow, &correction, dir, &dutyL, &dutyR);
+          PID_SPEED_2(&pidStraight, angleNow, &correction, dir, &dutyL, &dutyR);
 
           // Apply as forward drive on both motors using raw PWM counts
           // Left (TIM4): forward = CH4=pulse, CH3=0
@@ -834,6 +887,8 @@ void motor(void *argument)
       // Debounce: wait for button release before accepting next run
       while (user_is_pressed()) { osDelay(20); }
     }
+    // No OLED updates in this simplified run
+
     prev = now;
     osDelay(20);
   }
@@ -897,6 +952,7 @@ void controlTask(void *argument)
   for(;;) { osDelay(50); }
   /* USER CODE END controlTask */
 }
+
 /* USER CODE BEGIN Header_servoTask */
 /**
 * @brief Function implementing the servo_Task thread.
