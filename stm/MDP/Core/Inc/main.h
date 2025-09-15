@@ -91,6 +91,8 @@ void Error_Handler(void);
 #define MOTOR_AIN1_GPIO_Port GPIOB
 #define USER_BUTTON_Pin GPIO_PIN_0
 #define USER_BUTTON_GPIO_Port GPIOE
+#define ULTRASONIC_TRIG_Pin GPIO_PIN_15
+#define ULTRASONIC_TRIG_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 

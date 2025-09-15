@@ -82,7 +82,7 @@ const osThreadAttr_t MotorTask_attributes = {
 osThreadId_t encoderTaskHandle;
 const osThreadAttr_t encoderTask_attributes = {
   .name = "encoderTask",
-  .stack_size = 256 * 4,
+  .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for control_Task */
@@ -110,12 +110,6 @@ const osThreadAttr_t userButton_Task_attributes = {
 // Global servo object for use by defaultTask
 Servo global_steer;
 
-// Current instruction for OLED HUD (updated by MotorTask, read by encoder_task)
-static volatile char g_current_instr = '-';
-
-// Single-byte RX buffer for USART3 interrupt-driven reception
-static uint8_t uart3_rx_byte = 0;
-
 
 /* USER CODE END PV */
 
@@ -134,11 +128,34 @@ void StartDefaultTask(void *argument);
 void motor(void *argument);
 void encoder_task(void *argument);
 void controlTask(void *argument);
- void servoTask(void *argument);
- void userButtonTask(void *argument);
+void servoTask(void *argument);
+void userButtonTask(void *argument);
 
+/* USER CODE BEGIN PFP */
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+// UART3 RX byte buffer (interrupt-driven)
+static uint8_t uart3_rx_byte = 0;
+
+/* USER CODE END 0 */
+
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
 int main(void)
 {
+
+  /* USER CODE BEGIN 1 */
+
+  /* USER CODE END 1 */
+
+  /* MCU Configuration--------------------------------------------------------*/
+
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
 
   /* USER CODE BEGIN Init */
@@ -813,16 +830,14 @@ void motor(void *argument)
   // Execute instruction list once: [[S,20],[L,0],[s,10]]
   // Define instructions
   typedef struct { char dir; float dist_cm; } instr_t;
-  const instr_t program[] = {{'S',20.0f}, {'L',0.0f}, {'R',0.0f}, {'R',0.0f}, {'L',0.0f}, {'s',155.0f}};
-  //const instr_t program[] = {{'S',120.0f}};
+  const instr_t program[] = {{'S',100.0f}};
   const int program_len = sizeof(program)/sizeof(program[0]);
 
   for (int i = 0; i < program_len; ++i) {
     char d = program[i].dir;
     float cm = program[i].dist_cm;
 
-  g_current_instr = d; // publish current instruction for OLED
-  if (d == 'S') {
+    if (d == 'S') {
       move_start_straight(cm);
     } else if (d == 's') {
       move_start_straight(-cm);
@@ -835,7 +850,7 @@ void motor(void *argument)
     }
 
     // Wait until current movement completes
-  while (move_is_active()) {
+    while (move_is_active()) {
       osDelay(5);
     }
 
@@ -844,7 +859,6 @@ void motor(void *argument)
 
   // Program complete: ensure motors are stopped
   move_abort();
-  g_current_instr = '-';
   for(;;) { osDelay(1000); }
   /* USER CODE END motor */
 }
@@ -861,64 +875,35 @@ void motor(void *argument)
 void encoder_task(void *argument)
 {
   /* USER CODE BEGIN encoder_task */
-  // Update OLED at ~5 Hz; initialize static layout once, then update dynamic values only
-  uint32_t last_tick = HAL_GetTick();
-
-  // Static layout (draw once)
-  OLED_Clear();
-  OLED_ShowString(0, 0, (uint8_t*)"Yaw: ");
-  OLED_ShowString(88, 0, (uint8_t*)" deg");
-  OLED_ShowString(0, 16, (uint8_t*)"Instr: ");
-  OLED_ShowString(0, 32, (uint8_t*)"T:");
-  OLED_ShowChar(48, 32, ',', 12, 1);
-  OLED_ShowString(0, 48, (uint8_t*)"M:");
-  OLED_ShowChar(48, 48, ',', 12, 1);
-  OLED_Refresh_Gram();
-
+  // char buffer[32];  // Unused variable removed
   for(;;)
   {
-    uint32_t now = HAL_GetTick();
-    if (now - last_tick >= 200) {
-      last_tick = now;
+    int32_t tL=0,tR=0,mL=0,mR=0;
+    control_get_target_and_measured(&tL, &tR, &mL, &mR);
+    int8_t oL=0,oR=0;
+    control_get_outputs(&oL, &oR);
 
-      float yawf = imu_get_yaw();
-      int32_t tL=0,tR=0,mL=0,mR=0;
-      control_get_target_and_measured(&tL, &tR, &mL, &mR);
-      char instr = g_current_instr ? g_current_instr : '-';
 
-      // Lightweight rounding to avoid libm dependency
-      int yaw10 = (int)(yawf * 10.0f + (yawf >= 0.0f ? 0.5f : -0.5f));
-      int sign = (yaw10 < 0) ? -1 : 1;
-      if (yaw10 < 0) yaw10 = -yaw10;
-      int yaw_deg = yaw10 / 10;
-      int yaw_tenth = yaw10 % 10;
+    // OLED_Clear();
 
-      // Dynamic updates only (no full clear)
-      // Yaw
-      OLED_ShowChar(40, 0, (sign < 0) ? '-' : ' ', 12, 1);
-      OLED_ShowNumber(48, 0, (uint32_t)yaw_deg, 3, 12);
-      OLED_ShowChar(72, 0, '.', 12, 1);
-      OLED_ShowChar(80, 0, (char)('0' + yaw_tenth), 12, 1);
+    // // Show left: Target/Measured
+    // sprintf(buffer, "L T/M:%ld/%ld", tL, mL);
+    // OLED_ShowString(0, 0, (uint8_t*)buffer);
 
-      // Instruction
-      OLED_ShowChar(48, 16, instr, 12, 1);
+    // // Show right: Target/Measured
+    // sprintf(buffer, "R T/M:%ld/%ld", tR, mR);
+    // OLED_ShowString(0, 16, (uint8_t*)buffer);
 
-  // Targets: clear small areas first to avoid ghosting, then draw
-  OLED_ShowString(16, 32, (uint8_t*)"    ");
-  OLED_ShowString(56, 32, (uint8_t*)"    ");
-      OLED_ShowNumber(16, 32, (uint32_t)(tL & 0x7FFFFFFF), 4, 12);
-      OLED_ShowNumber(56, 32, (uint32_t)(tR & 0x7FFFFFFF), 4, 12);
+    // // Show PWM outputs (percent)
+    // sprintf(buffer, "L PWM:%d", (int)oL);
+    // OLED_ShowString(0, 32, (uint8_t*)buffer);
+    // sprintf(buffer, "R PWM:%d", (int)oR);
+    // OLED_ShowString(0, 48, (uint8_t*)buffer);
 
-  // Measured: clear small areas first to avoid ghosting, then draw
-  OLED_ShowString(16, 48, (uint8_t*)"    ");
-  OLED_ShowString(56, 48, (uint8_t*)"    ");
-      OLED_ShowNumber(16, 48, (uint32_t)(mL & 0x7FFFFFFF), 4, 12);
-      OLED_ShowNumber(56, 48, (uint32_t)(mR & 0x7FFFFFFF), 4, 12);
+  
 
-      // Refresh
-      OLED_Refresh_Gram();
-    }
-    osDelay(5);
+    // OLED_Refresh_Gram();
+    // osDelay(100);
   }
   /* USER CODE END encoder_task */
 }
