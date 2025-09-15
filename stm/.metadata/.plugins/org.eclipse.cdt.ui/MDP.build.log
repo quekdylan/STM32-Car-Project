@@ -1,4 +1,4 @@
-17:05:59 **** Incremental Build of configuration Debug for project MDP ****
+18:01:51 **** Incremental Build of configuration Debug for project MDP ****
 make -j7 all 
 arm-none-eabi-gcc "../Core/Src/movements.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F407xx -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I../Drivers/CMSIS/Include -I../Middlewares/Third_Party/FreeRTOS/Source/include -I../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2 -I../Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/movements.d" -MT"Core/Src/movements.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/movements.o"
 arm-none-eabi-gcc -o "MDP.elf" @"objects.list"   -mcpu=cortex-m4 -T"/Users/dylan/Desktop/NTU/SC2079/SC2079-MDP-Group-19/stm/MDP/STM32F407VETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="MDP.map" -Wl,--gc-sections -static -u _printf_float --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
@@ -9,7 +9,7 @@ arm-none-eabi-objdump -h -S MDP.elf  > "MDP.list"
 arm-none-eabi-objcopy  -O ihex MDP.elf  "MDP.hex"
 arm-none-eabi-objcopy  -O binary MDP.elf  "MDP.bin"
    text	   data	    bss	    dec	    hex	filename
-  60152	    484	  22564	  83200	  14500	MDP.elf
+  60408	    484	  22564	  83456	  14600	MDP.elf
 Finished building: default.size.stdout
  
 Finished building: MDP.hex
@@ -19,5 +19,5 @@ Finished building: MDP.bin
 Finished building: MDP.list
  
 
-17:06:00 Build Finished. 0 errors, 0 warnings. (took 1s.92ms)
+18:01:52 Build Finished. 0 errors, 0 warnings. (took 1s.65ms)
 

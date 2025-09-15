@@ -2,7 +2,8 @@
 ../Core/Src/control.c:44:6:control_clear_due	4	static
 ../Core/Src/control.c:46:6:control_init	24	static
 ../Core/Src/control.c:61:6:control_set_target_ticks_per_dt	16	static
-../Core/Src/control.c:68:6:control_step	48	static
-../Core/Src/control.c:120:6:HAL_TIM_PeriodElapsedCallback	16	static
-../Core/Src/control.c:127:6:control_get_target_and_measured	24	static
-../Core/Src/control.c:138:6:control_get_outputs	16	static
+../Core/Src/control.c:67:6:control_sync_encoders	8	static
+../Core/Src/control.c:77:6:control_step	48	static
+../Core/Src/control.c:129:6:HAL_TIM_PeriodElapsedCallback	16	static
+../Core/Src/control.c:136:6:control_get_target_and_measured	24	static
+../Core/Src/control.c:147:6:control_get_outputs	16	static

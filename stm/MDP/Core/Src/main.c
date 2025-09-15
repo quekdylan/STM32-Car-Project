@@ -813,8 +813,8 @@ void motor(void *argument)
   // Execute instruction list once: [[S,20],[L,0],[s,10]]
   // Define instructions
   typedef struct { char dir; float dist_cm; } instr_t;
-  //const instr_t program[] = {{'S',20.0f}, {'L',0.0f}, {'R',0.0f}, {'S',20.0f}, {'R',0.0f}, {'L',0.0f}, {'s',120.0f}};
-  const instr_t program[] = {{'S',120.0f}};
+  const instr_t program[] = {{'S',20.0f}, {'L',0.0f}, {'R',0.0f}, {'R',0.0f}, {'L',0.0f}, {'s',155.0f}};
+  //const instr_t program[] = {{'S',120.0f}};
   const int program_len = sizeof(program)/sizeof(program[0]);
 
   for (int i = 0; i < program_len; ++i) {
@@ -861,8 +861,20 @@ void motor(void *argument)
 void encoder_task(void *argument)
 {
   /* USER CODE BEGIN encoder_task */
-  // Update OLED at ~5 Hz; avoid printf floats to keep stack small
+  // Update OLED at ~5 Hz; initialize static layout once, then update dynamic values only
   uint32_t last_tick = HAL_GetTick();
+
+  // Static layout (draw once)
+  OLED_Clear();
+  OLED_ShowString(0, 0, (uint8_t*)"Yaw: ");
+  OLED_ShowString(88, 0, (uint8_t*)" deg");
+  OLED_ShowString(0, 16, (uint8_t*)"Instr: ");
+  OLED_ShowString(0, 32, (uint8_t*)"T:");
+  OLED_ShowChar(48, 32, ',', 12, 1);
+  OLED_ShowString(0, 48, (uint8_t*)"M:");
+  OLED_ShowChar(48, 48, ',', 12, 1);
+  OLED_Refresh_Gram();
+
   for(;;)
   {
     uint32_t now = HAL_GetTick();
@@ -874,34 +886,36 @@ void encoder_task(void *argument)
       control_get_target_and_measured(&tL, &tR, &mL, &mR);
       char instr = g_current_instr ? g_current_instr : '-';
 
-  // Lightweight rounding to avoid libm dependency
-  int yaw10 = (int)(yawf * 10.0f + (yawf >= 0.0f ? 0.5f : -0.5f));
+      // Lightweight rounding to avoid libm dependency
+      int yaw10 = (int)(yawf * 10.0f + (yawf >= 0.0f ? 0.5f : -0.5f));
       int sign = (yaw10 < 0) ? -1 : 1;
       if (yaw10 < 0) yaw10 = -yaw10;
       int yaw_deg = yaw10 / 10;
       int yaw_tenth = yaw10 % 10;
 
-      OLED_Clear();
+      // Dynamic updates only (no full clear)
       // Yaw
-      OLED_ShowString(0, 0, (uint8_t*)"Yaw: ");
       OLED_ShowChar(40, 0, (sign < 0) ? '-' : ' ', 12, 1);
       OLED_ShowNumber(48, 0, (uint32_t)yaw_deg, 3, 12);
       OLED_ShowChar(72, 0, '.', 12, 1);
       OLED_ShowChar(80, 0, (char)('0' + yaw_tenth), 12, 1);
-      OLED_ShowString(88, 0, (uint8_t*)" deg");
+
       // Instruction
-      OLED_ShowString(0, 16, (uint8_t*)"Instr: ");
       OLED_ShowChar(48, 16, instr, 12, 1);
-      // Targets
-      OLED_ShowString(0, 32, (uint8_t*)"T:");
+
+  // Targets: clear small areas first to avoid ghosting, then draw
+  OLED_ShowString(16, 32, (uint8_t*)"    ");
+  OLED_ShowString(56, 32, (uint8_t*)"    ");
       OLED_ShowNumber(16, 32, (uint32_t)(tL & 0x7FFFFFFF), 4, 12);
-      OLED_ShowChar(48, 32, ',', 12, 1);
       OLED_ShowNumber(56, 32, (uint32_t)(tR & 0x7FFFFFFF), 4, 12);
-      // Measured
-      OLED_ShowString(0, 48, (uint8_t*)"M:");
+
+  // Measured: clear small areas first to avoid ghosting, then draw
+  OLED_ShowString(16, 48, (uint8_t*)"    ");
+  OLED_ShowString(56, 48, (uint8_t*)"    ");
       OLED_ShowNumber(16, 48, (uint32_t)(mL & 0x7FFFFFFF), 4, 12);
-      OLED_ShowChar(48, 48, ',', 12, 1);
       OLED_ShowNumber(56, 48, (uint32_t)(mR & 0x7FFFFFFF), 4, 12);
+
+      // Refresh
       OLED_Refresh_Gram();
     }
     osDelay(5);

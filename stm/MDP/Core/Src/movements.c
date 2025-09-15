@@ -26,15 +26,15 @@ static float g_decel_dist_cm = 10.0f; // decelerate over last 10 cm
 // Proportional gain for heading correction.
 // A small value gently corrects the heading. Too large a value will cause oscillation.
 // Units: (ticks/10ms) per degree of error.
-#define YAW_KP_TICKS_PER_DEG (1.0f)
+#define YAW_KP_TICKS_PER_DEG (2.5f)
 
 // --- Turn Configuration ---
 // Speed for in-place turns (encoder ticks / 10ms per wheel; opposite signs).
-#define TURN_BASE_TICKS_PER_DT   (10)     // per wheel (both wheels same magnitude)
+#define TURN_BASE_TICKS_PER_DT   (10.0f)     // per wheel (both wheels same magnitude)
 #define TURN_YAW_TARGET_DEG      (90.0f)  // desired turn angle
 #define TURN_YAW_TOLERANCE_DEG   (1.0f)   // acceptable tolerance to stop
-#define TURN_YAW_SLOW_BAND_DEG   (15.0f)  // start slowing when within this band
-#define TURN_MIN_TICKS_PER_DT    (3)      // minimum per-wheel speed while turning
+#define TURN_YAW_SLOW_BAND_DEG   (10.0f)  // start slowing when within this band
+#define TURN_MIN_TICKS_PER_DT    (3.0f)      // minimum per-wheel speed while turning
 
 // Steering angles for Ackermann (Servo_WriteAngle: -100=full left, +100=full right)
 #define STEER_ANGLE_MAG          (100.0f)  // magnitude for turning
@@ -93,6 +93,7 @@ void move_abort(void) {
 void move_start_straight(float distance_cm) {
   // 1. Reset hardware and state
   motor_reset_encoders();
+  control_sync_encoders();
   imu_zero_yaw(); // Ensure we start with a target heading of 0 degrees
   ms.active = 1;
   ms.mode = MOVE_STRAIGHT;
@@ -133,6 +134,7 @@ void move_start_turn(char dir_char)
 {
   // Prepare state
   motor_reset_encoders();   // not strictly needed for turn, but keeps odom clean
+  control_sync_encoders();
   imu_zero_yaw();           // measure delta from current heading
   ms.active = 1;
   ms.mode = MOVE_TURN;
@@ -258,8 +260,8 @@ void move_tick_100Hz(void) {
   if (yaw_bias < -(base_ticks/2)) yaw_bias = -(base_ticks/2);
   
   // 6) Combine base and yaw correction
-  int32_t left_target_ticks  = base_ticks - yaw_bias;
-  int32_t right_target_ticks = base_ticks + yaw_bias;
+  int32_t left_target_ticks  = base_ticks - (yaw_bias * ms.dir);
+  int32_t right_target_ticks = base_ticks + (yaw_bias * ms.dir);
 
   // 6. Set the targets for the low-level PID speed controllers
   control_set_target_ticks_per_dt(left_target_ticks * ms.dir, right_target_ticks * ms.dir);

@@ -14,7 +14,7 @@
 ../Core/Src/main.c:776:6:StartDefaultTask	1
 ../Core/Src/main.c:792:6:motor	10
 ../Core/Src/main.c:861:6:encoder_task	7
-../Core/Src/main.c:919:6:controlTask	2
-../Core/Src/main.c:942:6:servoTask	1
-../Core/Src/main.c:957:6:userButtonTask	1
-../Core/Src/main.c:972:6:Error_Handler	1
+../Core/Src/main.c:933:6:controlTask	2
+../Core/Src/main.c:956:6:servoTask	1
+../Core/Src/main.c:971:6:userButtonTask	1
+../Core/Src/main.c:986:6:Error_Handler	1

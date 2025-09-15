@@ -2,7 +2,7 @@
 ../Core/Src/movements.c:81:9:move_is_active	1
 ../Core/Src/movements.c:85:6:move_abort	2
 ../Core/Src/movements.c:93:6:move_start_straight	8
-../Core/Src/movements.c:132:6:move_start_turn	6
-../Core/Src/movements.c:168:6:move_tick_100Hz	17
-../Core/Src/movements.c:269:6:move_set_profile_distances_cm	3
-../Core/Src/movements.c:277:6:move_get_profile_distances_cm	3
+../Core/Src/movements.c:133:6:move_start_turn	6
+../Core/Src/movements.c:170:6:move_tick_100Hz	17
+../Core/Src/movements.c:271:6:move_set_profile_distances_cm	3
+../Core/Src/movements.c:279:6:move_get_profile_distances_cm	3

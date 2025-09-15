@@ -64,6 +64,15 @@ void control_set_target_ticks_per_dt(int32_t left_ticks, int32_t right_ticks)
     target_right_ticks_dt = right_ticks;
 }
 
+void control_sync_encoders(void)
+{
+    // When another module resets encoder counters, realign our baselines
+    // and skip one sample to avoid a large spurious delta fighting the PID.
+    last_left_counts = motor_get_left_encoder_counts();
+    last_right_counts = motor_get_right_encoder_counts();
+    first_sample = 1;
+}
+
 // Runs at 100 Hz from TIM5 ISR
 void control_step(void)
 {

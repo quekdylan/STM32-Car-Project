@@ -13,7 +13,7 @@ static float    s_gyro_bias_z = 0.0f;  // bias in deg/s (for Z axis)
 #define IMU_DT_S 0.01f
 
 // Small deadband to squash tiny noise (in deg/s) when robot is still
-#define GZ_DEADBAND_DPS  0.2f
+#define GZ_DEADBAND_DPS  0.5f
 
 // Wrap to [-180, 180]
 static inline float wrap180(float a){
