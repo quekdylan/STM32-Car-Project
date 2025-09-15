@@ -6,10 +6,14 @@ import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.RectF;
 import android.util.AttributeSet;
 import android.view.DragEvent;
+import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.View;
+
+import androidx.constraintlayout.widget.ConstraintSet;
 
 import com.example.mdpapp.R;
 import com.example.mdpapp.models.Arena;
@@ -23,14 +27,23 @@ public class ArenaView extends View {
     private Paint textPaint;
     private Paint robotPaint;
 
-    private Obstacle selectedObstacle;
+    private Obstacle selectedObstacle, selectedForSide;
+
+    private GestureDetector gestureDetector;
 
     private Bitmap robotN, robotS, robotE, robotW;
+    private Bitmap arrowUp, arrowDown, arrowLeft, arrowRight;
 
     public interface OnObstacleChangeListener {
         void onObstacleAdded(Obstacle obstacle);
+
         void onObstacleRemoved(int obstacleId);
+
         void onObstacleMoved(Obstacle obstacle);
+
+        void onObstacleFaceAdded(Obstacle obstacle);
+
+        void onObstacleFaceRemoved(Obstacle obstacle);
     }
 
     public OnObstacleChangeListener getOnObstacleChangeListener() {
@@ -52,6 +65,8 @@ public class ArenaView extends View {
     public ArenaView(Context context, AttributeSet attrs) {
         super(context, attrs);
         init();
+
+
     }
 
     private void init() {
@@ -64,7 +79,7 @@ public class ArenaView extends View {
 
         textPaint = new Paint();
         textPaint.setColor(Color.WHITE);
-        textPaint.setTextSize(30); // adjust font size
+        textPaint.setTextSize(10); // adjust font size
 
         robotPaint = new Paint();
         robotPaint.setColor(Color.RED);
@@ -73,6 +88,11 @@ public class ArenaView extends View {
         robotS = BitmapFactory.decodeResource(getResources(), R.drawable.robot_s);
         robotE = BitmapFactory.decodeResource(getResources(), R.drawable.robot_e);
         robotW = BitmapFactory.decodeResource(getResources(), R.drawable.robot_w);
+
+        arrowUp = BitmapFactory.decodeResource(getResources(), R.drawable.arrow_up);
+        arrowDown = BitmapFactory.decodeResource(getResources(), R.drawable.arrow_down);
+        arrowLeft = BitmapFactory.decodeResource(getResources(), R.drawable.arrow_left);
+        arrowRight = BitmapFactory.decodeResource(getResources(), R.drawable.arrow_right);
 
         setOnDragListener((v, event) -> {
             switch (event.getAction()) {
@@ -115,7 +135,67 @@ public class ArenaView extends View {
             }
         });
 
+        gestureDetector = new GestureDetector(getContext(), new GestureDetector.SimpleOnGestureListener() {
+            @Override
+            public boolean onDoubleTap(MotionEvent e) {
+                handleDoubleTap(e.getX(), e.getY());
+                return true;
+            }
+
+            @Override
+            public void onLongPress(MotionEvent e) {
+                handleLongPress(e.getX(), e.getY());
+            }
+        });
+
     }
+
+    private void handleDoubleTap(float x, float y) {
+        int rows = arena.getHeight();
+        int cols = arena.getWidth();
+        float cellWidth = getWidth() / (float) cols;
+        float cellHeight = getHeight() / (float) rows;
+
+        for (Obstacle o : arena.getObstacles()) {
+            float left = o.getX() * cellWidth;
+            float top = o.getY() * cellHeight;
+            float right = left + cellWidth;
+            float bottom = top + cellHeight;
+
+            if (x >= left && x <= right && y >= top && y <= bottom) {
+                selectedForSide = o;  // mark this obstacle for side selection
+                invalidate();          // redraw to show arrows
+                break;
+            }
+        }
+    }
+
+    // Triggered when user long-presses an obstacle
+    private void handleLongPress(float x, float y) {
+        int rows = arena.getHeight();
+        int cols = arena.getWidth();
+        float cellWidth = getWidth() / (float) cols;
+        float cellHeight = getHeight() / (float) rows;
+
+        selectedObstacle = null;
+        for (Obstacle o : arena.getObstacles()) {
+            float left = o.getX() * cellWidth;
+            float top = o.getY() * cellHeight;
+            float right = left + cellWidth;
+            float bottom = top + cellHeight;
+
+            if (x >= left && x <= right && y >= top && y <= bottom) {
+                selectedObstacle = o;
+
+                // Offset between finger and top-left of obstacle
+                dragOffsetX = x - left;
+                dragOffsetY = y - top;
+                invalidate();
+                break;
+            }
+        }
+    }
+
 
     @Override
     protected void onDraw(Canvas canvas) {
@@ -169,13 +249,56 @@ public class ArenaView extends View {
                 drawBottom = bottom + extra / 2;
             }
 
+            if (o == selectedForSide) {
+                int arrowSize = 50; // adjust size
+                Bitmap up = Bitmap.createScaledBitmap(arrowUp, arrowSize, arrowSize, false);
+                Bitmap down = Bitmap.createScaledBitmap(arrowDown, arrowSize, arrowSize, false);
+                Bitmap leftBmp = Bitmap.createScaledBitmap(arrowLeft, arrowSize, arrowSize, false);
+                Bitmap rightBmp = Bitmap.createScaledBitmap(arrowRight, arrowSize, arrowSize, false);
+
+                canvas.drawBitmap(up, (drawLeft + drawRight) / 2 - arrowSize / 2, drawTop - arrowSize - 10, null);
+                canvas.drawBitmap(down, (drawLeft + drawRight) / 2 - arrowSize / 2, drawBottom + 10, null);
+                canvas.drawBitmap(leftBmp, drawLeft - arrowSize - 10, (drawTop + drawBottom) / 2 - arrowSize / 2, null);
+                canvas.drawBitmap(rightBmp, drawRight + 10, (drawTop + drawBottom) / 2 - arrowSize / 2, null);
+            }
+
             // Draw actual obstacle
             canvas.drawRect(drawLeft, drawTop, drawRight, drawBottom, obstaclePaint);
 
+            if (o.getTargetFace() != null) {
+                Paint facePaint = new Paint();
+                facePaint.setColor(Color.YELLOW);
+
+                switch (o.getTargetFace()) {
+                    case N:
+                        // Top side, full width
+                        canvas.drawRect(drawLeft, drawTop, drawRight, drawTop + 10, facePaint);
+                        break;
+                    case S:
+                        // Bottom side, full width
+                        canvas.drawRect(drawLeft, drawBottom - 10, drawRight, drawBottom, facePaint);
+                        break;
+                    case W:
+                        // Left side, full height
+                        canvas.drawRect(drawLeft, drawTop, drawLeft + 10, drawBottom, facePaint);
+                        break;
+                    case E:
+                        // Right side, full height
+                        canvas.drawRect(drawRight - 10, drawTop, drawRight, drawBottom, facePaint);
+                        break;
+                }
+            }
+
             // Draw obstacle number in the center
-            float textX = drawLeft + (drawRight - drawLeft) / 4;
-            float textY = drawTop + (drawBottom - drawTop) / 2;
-            canvas.drawText(String.valueOf(o.getId()), textX, textY, textPaint);
+            String text = o.getTargetId() > 0 ? String.valueOf(o.getTargetId()) : String.valueOf(o.getId());
+            if (o.getTargetId() > 0) {
+                textPaint.setTextSize(40); // larger font for target
+            } else {
+                textPaint.setTextSize(10); // default small font
+            }
+            float textX = drawLeft + (drawRight - drawLeft) / 2 - textPaint.measureText(text) / 2;
+            float textY = drawTop + (drawBottom - drawTop) / 2 + textPaint.getTextSize() / 2;
+            canvas.drawText(text, textX, textY, textPaint);
         }
     }
 
@@ -236,11 +359,65 @@ public class ArenaView extends View {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
+        gestureDetector.onTouchEvent(event); // Handle gestures
+
+        if (selectedObstacle == null && selectedForSide == null) return true;
+
+
         int rows = arena.getHeight();
         int cols = arena.getWidth();
         float cellWidth = getWidth() / (float) cols;
         float cellHeight = getHeight() / (float) rows;
 
+        // Change surface for side selection after select obstacle and
+        if (selectedForSide != null && event.getAction() == MotionEvent.ACTION_DOWN) {
+            float drawLeft = selectedForSide.getX() * cellWidth;
+            float drawTop = selectedForSide.getY() * cellHeight;
+            float drawRight = drawLeft + cellWidth;
+            float drawBottom = drawTop + cellHeight;
+
+            int arrowSize = 50; // adjust size
+            float centerX = (drawLeft + drawRight) / 2 - arrowSize / 2;
+            float centerY = (drawTop + drawBottom) / 2 - arrowSize / 2;
+
+            RectF upRect = new RectF(centerX, drawTop - arrowSize - 10, centerX + arrowSize, drawTop - 10);
+            RectF downRect = new RectF(centerX, drawBottom + 10, centerX + arrowSize, drawBottom + 10 + arrowSize);
+            RectF leftRect = new RectF(drawLeft - arrowSize - 10, centerY, drawLeft - 10, centerY + arrowSize);
+            RectF rightRect = new RectF(drawRight + 10, centerY, drawRight + 10 + arrowSize, centerY + arrowSize);
+
+            // Check which arrow was tapped
+            Obstacle.Direction prevFace = selectedForSide.getTargetFace();
+            if (upRect.contains(event.getX(), event.getY())) {
+                selectedForSide.setTargetFace(prevFace == Obstacle.Direction.N ? null : Obstacle.Direction.N);
+            } else if (downRect.contains(event.getX(), event.getY())) {
+                selectedForSide.setTargetFace(prevFace == Obstacle.Direction.S ? null : Obstacle.Direction.S);
+            } else if (leftRect.contains(event.getX(), event.getY())) {
+                selectedForSide.setTargetFace(prevFace == Obstacle.Direction.W ? null : Obstacle.Direction.W);
+            } else if (rightRect.contains(event.getX(), event.getY())) {
+                selectedForSide.setTargetFace(prevFace == Obstacle.Direction.E ? null : Obstacle.Direction.E);
+            } else {
+                return true; // tap outside arrows
+            }
+
+
+            // Notify listener (to broadcast via Bluetooth)
+            if (obstacleChangeListener != null) {
+                if (selectedForSide.getTargetFace() != null) {
+                    obstacleChangeListener.onObstacleFaceAdded(selectedForSide);
+                } else {
+                    obstacleChangeListener.onObstacleFaceRemoved(selectedForSide);
+                }
+            }
+
+            selectedForSide = null; // done selecting side
+
+            // Redraw obstacle to reflect direction selection
+            invalidate();
+
+            return true; // consume touch
+        }
+
+        // Handle dragging
         float touchX = event.getX();
         float touchY = event.getY();
 
@@ -268,7 +445,6 @@ public class ArenaView extends View {
 
             case MotionEvent.ACTION_MOVE:
                 if (selectedObstacle != null) {
-                    // Move obstacle with finger, accounting for drag offset
                     float newX = (touchX - dragOffsetX + cellWidth / 2) / cellWidth;
                     float newY = (touchY - dragOffsetY + cellHeight / 2) / cellHeight;
 
@@ -279,9 +455,10 @@ public class ArenaView extends View {
                 break;
 
             case MotionEvent.ACTION_UP:
-                dragOffsetX = 0;
-                dragOffsetY = 0;
                 if (selectedObstacle != null) {
+                    dragOffsetX = 0;
+                    dragOffsetY = 0;
+
                     // Snap to grid
                     int snappedX = Math.round(touchX / cellWidth);
                     int snappedY = Math.round(touchY / cellHeight);
@@ -290,7 +467,7 @@ public class ArenaView extends View {
 
                     // Remove if outside arena
                     if (snappedX < 0 || snappedX >= cols || snappedY < 0 || snappedY >= rows) {
-                        if(wasInArena) {
+                        if (wasInArena) {
                             arena.removeObstacle(selectedObstacle);
                             if (obstacleChangeListener != null) {
                                 obstacleChangeListener.onObstacleRemoved(selectedObstacle.getId());
@@ -320,7 +497,6 @@ public class ArenaView extends View {
 
         return true;
     }
-
 
 }
 

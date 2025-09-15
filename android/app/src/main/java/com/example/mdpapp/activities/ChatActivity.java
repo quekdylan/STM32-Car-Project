@@ -27,19 +27,25 @@ public class ChatActivity extends AppCompatActivity {
 
     private BluetoothService bluetoothService;
 
-    private final BluetoothService.OnMessageReceivedListener messageListener = message ->
-            runOnUiThread(() -> tvMessages.append(message));
-
-    private final BluetoothService.OnMessageReceivedListener statusListener = message ->
-    {
+    private final BluetoothService.OnMessageReceivedListener bluetoothListener = message -> {
         runOnUiThread(() -> {
-            // Filter only status messages
+            tvMessages.append(message + "\n");
             if (message.startsWith("{\"status\":")) {
                 String status = extractStatus(message);
                 if (status != null) {
                     // Overwrite TextView content
                     tvRobotStatus.setText(status);
                 }
+            }
+
+            else if (message.startsWith("STATUS:Disconnected from ")) {
+                Toast.makeText(ChatActivity.this, message,
+                        Toast.LENGTH_SHORT).show();
+            }
+
+            else if (message.startsWith("STATUS:Connected to ")) {
+                Toast.makeText(ChatActivity.this, message,
+                        Toast.LENGTH_SHORT).show();
             }
         });
     };
@@ -62,8 +68,7 @@ public class ChatActivity extends AppCompatActivity {
         public void onServiceConnected(ComponentName name, IBinder service) {
             BluetoothService.LocalBinder binder = (BluetoothService.LocalBinder) service;
             bluetoothService = binder.getService();
-            bluetoothService.addListener(messageListener);
-            bluetoothService.addListener(statusListener);
+            bluetoothService.addListener(bluetoothListener);
             bluetoothService.startAcceptThread();
             isServiceBound = true;
         }
@@ -127,19 +132,10 @@ public class ChatActivity extends AppCompatActivity {
     }
 
     @Override
-    protected void onStart() {
-        super.onStart();
-        if (bluetoothService != null) {
-            bluetoothService.addListener(messageListener);
-        }
-    }
-
-    @Override
     protected void onStop() {
         super.onStop();
         if (bluetoothService != null) {
-            bluetoothService.removeListener(messageListener);
-            bluetoothService.removeListener(statusListener);
+            bluetoothService.removeListener(bluetoothListener);
         }
     }
     private void sendMovementCommand(String command) {

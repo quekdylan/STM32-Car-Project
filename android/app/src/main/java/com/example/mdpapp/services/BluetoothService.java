@@ -15,6 +15,7 @@ import android.util.Log;
 
 import androidx.annotation.RequiresPermission;
 import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -32,19 +33,20 @@ public class BluetoothService extends Service {
     private ConnectThread connectThread;
     private AcceptThread acceptThread;
     private ConnectedThread connectedThread;
+    private BluetoothDevice lastConnectedDevice;
 
     private final List<OnMessageReceivedListener> listeners = new ArrayList<>();
 
     private final IBinder binder = new LocalBinder();
 
     public class LocalBinder extends Binder {
-        public BluetoothService getService(){
+        public BluetoothService getService() {
             return BluetoothService.this;
         }
     }
 
     @Override
-    public IBinder onBind(Intent intent){
+    public IBinder onBind(Intent intent) {
         return binder;
     }
 
@@ -71,10 +73,15 @@ public class BluetoothService extends Service {
 
 
     // Start client connection
-    public void connect(BluetoothDevice device) {
-        if (connectThread != null) {
-            connectThread.cancel();
+    public synchronized void connect(BluetoothDevice device) {
+        resetThreads(); // clean up any previous threads
+
+        // Stop server thread if running
+        if (acceptThread != null) {
+            acceptThread.cancel();
+            acceptThread = null;
         }
+
         connectThread = new ConnectThread(device);
         connectThread.start();
     }
@@ -137,6 +144,17 @@ public class BluetoothService extends Service {
                     }
                 } catch (IOException e) {
                     Log.d(TAG, "Input stream disconnected", e);
+                    BluetoothDevice device = mmSocket.getRemoteDevice();
+                    if (ContextCompat.checkSelfPermission(BluetoothService.this, Manifest.permission.BLUETOOTH_CONNECT)
+                            != PackageManager.PERMISSION_GRANTED) {
+                        return;
+                    }
+                    notifyMessageReceived("STATUS:Disconnected from " + device.getName());
+                    // Cleanup connectedThread
+                    connectedThread = null;
+
+                    // Restart AcceptThread so new connections can come in
+                    startAcceptThread();
                     break;
                 }
             }
@@ -168,6 +186,7 @@ public class BluetoothService extends Service {
         private static final String TAG = "ConnectThread";
         private final BluetoothSocket mmSocket;
         private final BluetoothDevice mmDevice;
+
         public ConnectThread(BluetoothDevice device) {
             // Use a temporary object that is later assigned to mmSocket
             // because mmSocket is final
@@ -185,17 +204,22 @@ public class BluetoothService extends Service {
 
         @RequiresPermission(allOf = {Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT})
         public void run() {
-            // Stop discovery because it otherwise slows down the connection.
-            // Note: don't check permissions inside ConnectThread
-            bluetoothAdapter.cancelDiscovery();
+            if (ActivityCompat.checkSelfPermission(BluetoothService.this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                if (bluetoothAdapter.isDiscovering()) {
+                    bluetoothAdapter.cancelDiscovery();
+                }
+            }
 
             try {
                 // Connect through the socket.
                 mmSocket.connect();
                 Log.d(TAG, "Connected to " + mmDevice.getName());
+                notifyMessageReceived("STATUS:Connected to " + mmDevice.getName());
             } catch (IOException connectException) {
                 // Failed to connect
                 Log.e(TAG, "Connection failed", connectException);
+                // Notify listeners
+                notifyMessageReceived("STATUS:Failed to connect to " + mmDevice.getName());
                 try {
                     mmSocket.close();
                 } catch (IOException closeException) {
@@ -247,8 +271,8 @@ public class BluetoothService extends Service {
 
         public void run() {
             BluetoothSocket socket = null;
-            // Keep listening until exception occurs or a socket is returned
-            while (true) {
+            // Keep listening until thread is interrupted
+            while (!Thread.currentThread().isInterrupted()) {
                 try {
                     socket = mmServerSocket.accept();
                 } catch (IOException e) {
@@ -260,13 +284,13 @@ public class BluetoothService extends Service {
                     // A connection was accepted. Perform work associated with
                     // the connection in a separate thread.
                     manageMyConnectedSocket(socket);
-                    try {
-                        mmServerSocket.close();
-                    } catch (IOException e) {
-                        Log.e(TAG, "Could not close the server socket", e);
-                    }
-                    break;
                 }
+            }
+
+            try {
+                mmServerSocket.close();
+            } catch (IOException e) {
+                Log.e(TAG, "Could not close the server socket", e);
             }
 
         }
@@ -296,18 +320,30 @@ public class BluetoothService extends Service {
         acceptThread.start();
     }
 
-    private void manageMyConnectedSocket(BluetoothSocket socket) {
+    private synchronized void manageMyConnectedSocket(BluetoothSocket socket) {
+        lastConnectedDevice = socket.getRemoteDevice();
+        
         if (connectedThread != null) {
             connectedThread.cancel();
+            connectedThread = null;
         }
 
         connectedThread = new ConnectedThread(socket);
         connectedThread.start();
+
+        // Notify listeners
+        BluetoothDevice device = socket.getRemoteDevice();
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
+                == PackageManager.PERMISSION_GRANTED) {
+            notifyMessageReceived("STATUS:Connected to " + device.getName());
+        }
     }
+
 
     public boolean isBluetoothEnabled() {
         return bluetoothAdapter != null && bluetoothAdapter.isEnabled();
     }
+
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     public void enableBluetooth() {
         if (bluetoothAdapter != null && !bluetoothAdapter.isEnabled()) {
@@ -326,6 +362,10 @@ public class BluetoothService extends Service {
     public void startScan() {
         if (bluetoothAdapter == null) return;
 
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            return; // Permission not granted
+        }
+
         if (bluetoothAdapter.isDiscovering()) {
             bluetoothAdapter.cancelDiscovery();
         }
@@ -339,6 +379,32 @@ public class BluetoothService extends Service {
         notifyMessageReceived("STATUS:Scanning for devices...");
     }
 
+    private synchronized void resetThreads() {
+        if (connectThread != null) {
+            connectThread.cancel();
+            connectThread = null;
+        }
+        if (connectedThread != null) {
+            connectedThread.cancel();
+            connectedThread = null;
+        }
+        if (acceptThread != null) {
+            acceptThread.cancel();
+            acceptThread = null;
+        }
+    }
 
+    public void reconnect(BluetoothDevice device) {
+        new Thread(() -> {
+            while (connectedThread == null) {
+                try {
+                    connect(device); // start ConnectThread
+                    Thread.sleep(5000); // retry every 5 seconds
+                } catch (InterruptedException e) {
+                    break;
+                }
+            }
+        }).start();
+    }
 
 }

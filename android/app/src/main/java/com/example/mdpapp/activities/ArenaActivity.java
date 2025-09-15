@@ -30,6 +30,7 @@ import android.content.ComponentName;
 import android.content.ServiceConnection;
 import android.content.Intent;
 import android.os.IBinder;
+import android.widget.Toast;
 
 
 public class ArenaActivity extends AppCompatActivity {
@@ -45,167 +46,239 @@ public class ArenaActivity extends AppCompatActivity {
     private BluetoothService bluetoothService;
     private boolean bound = false;
 
-    private final ServiceConnection connection = new ServiceConnection() {
-        @Override
-        public void onServiceConnected(ComponentName name, IBinder service) {
-            BluetoothService.LocalBinder binder = (BluetoothService.LocalBinder) service;
-            bluetoothService = binder.getService();
-            bound = true;
+    private BluetoothService.OnMessageReceivedListener bluetoothListener = message -> {
+        runOnUiThread(() -> {
+            Toast.makeText(ArenaActivity.this, message,
+                    Toast.LENGTH_SHORT).show();
+        });
+        if (message.startsWith("TARGET,")) {
+            String[] parts = message.split(",");
+            if (parts.length == 3) {
+                int obstacleNumber = Integer.parseInt(parts[1].trim());
+                int targetId = Integer.parseInt(parts[2].trim());
+
+                runOnUiThread(() -> {
+                    Obstacle obstacle = arena.getObstacleById(obstacleNumber);
+
+                    if (obstacle != null) {
+                        // Set or unset targetId
+                        obstacle.setTargetId(targetId < 0 ? -1 : targetId);
+                        arenaView.invalidate(); // Redraw
+                    } else {
+                        // Obstacle not yet placed
+                        Toast.makeText(ArenaActivity.this,
+                                "Warning: Target received for obstacle #" + obstacleNumber +
+                                        " which is not yet placed.",
+                                Toast.LENGTH_SHORT).show();
+                    }
+                });
+            }
         }
 
-        @Override
-        public void onServiceDisconnected(ComponentName name) {
-            bound = false;
+        else if (message.startsWith("ROBOT,")){
+            String[] parts = message.split(",");
+            if(parts.length==4){
+                int x = Integer.parseInt(parts[1].trim());
+                int y = Integer.parseInt(parts[2].trim());
+                Robot.Direction dir = Robot.Direction.valueOf(parts[3].trim());
+
+                if(arena == null || x < 0 || x >= arena.getWidth() || y < 0 || y >= arena.getHeight()){
+                    runOnUiThread(() -> Toast.makeText(ArenaActivity.this, "INVALID ROBOT COMMAND! OUT OF BOUNDS!",
+                            Toast.LENGTH_SHORT).show());
+                    return;
+                }
+
+                runOnUiThread(() -> {
+                    Robot robot = arena.getRobot();
+                    if(robot!=null){
+                        robot.setX(x);
+                        robot.setY(y);
+                        robot.setFacing(dir);
+                    }else{
+                        robot = new Robot(x, y, dir);
+                        arena.setRobot(robot);
+                    }
+
+                    arenaView.invalidate();
+                    tvRobotCoord.setText("(" + robot.getX() + "," + robot.getY() + ")");
+                    tvRobotDir.setText(robot.getFacing().name());
+                });
+
+            }
         }
     };
 
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_arena);
-
-        Intent intent = new Intent(this, BluetoothService.class);
-        bindService(intent, connection, BIND_AUTO_CREATE);
-
-        tvRobotCoord = findViewById(R.id.tvRobotCoord);
-        tvRobotDir = findViewById(R.id.tvRobotDir);
-        etCount = findViewById(R.id.etObstacleCount);
-        btnGenerateMenu = findViewById(R.id.btnGenerateMenu);
-        spinner = findViewById(R.id.spObstacleSpinner);
-        ivPreview = findViewById(R.id.ivObstaclePreview);
-        arenaView = findViewById(R.id.arenaView);
-
-        btnGenerateMenu.setOnClickListener(v -> {
-            String input = etCount.getText().toString();
-            if (input.isEmpty()) return;
-            int n = Integer.parseInt(input);
-
-            // Populate spinner with obstacle IDs
-            String[] items = new String[n];
-            for (int i = 0; i < n; i++) items[i] = String.valueOf(i + 1);
-
-            ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-                    android.R.layout.simple_spinner_item, items);
-            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-            spinner.setAdapter(adapter);
-        });
-
-        spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+        private final ServiceConnection connection = new ServiceConnection() {
             @Override
-            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                int obstacleId = position + 1;
-
-                // Set preview ImageView
-                String drawableName = "obstacle_" + obstacleId;
-                int resId = getResources().getIdentifier(
-                        "obstacle_" + obstacleId,
-                        "drawable",
-                        getPackageName()
-                );
-
-                ivPreview.setImageResource(resId);
-                ivPreview.setTag(obstacleId);
+            public void onServiceConnected(ComponentName name, IBinder service) {
+                BluetoothService.LocalBinder binder = (BluetoothService.LocalBinder) service;
+                bluetoothService = binder.getService();
+                bound = true;
+                bluetoothService.addListener(bluetoothListener);
+                bluetoothService.startAcceptThread();
             }
 
             @Override
-            public void onNothingSelected(AdapterView<?> parent) {
+            public void onServiceDisconnected(ComponentName name) {
+                bound = false;
             }
-        });
+        };
 
-        ivPreview.setOnLongClickListener(v -> {
-            int id = (int) v.getTag();
+        @Override
+        protected void onCreate (Bundle savedInstanceState){
+            super.onCreate(savedInstanceState);
+            setContentView(R.layout.activity_arena);
 
-            // Check if obstacle with this ID already exists in arena
-            Obstacle existing = arena.getObstacleById(id);
+            Intent intent = new Intent(this, BluetoothService.class);
+            bindService(intent, connection, BIND_AUTO_CREATE);
 
-            if (existing != null) {
-                // Pick up existing obstacle
-                arena.removeObstacle(existing);
-                arenaView.invalidate();
+            tvRobotCoord = findViewById(R.id.tvRobotCoord);
+            tvRobotDir = findViewById(R.id.tvRobotDir);
+            etCount = findViewById(R.id.etObstacleCount);
+            btnGenerateMenu = findViewById(R.id.btnGenerateMenu);
+            spinner = findViewById(R.id.spObstacleSpinner);
+            ivPreview = findViewById(R.id.ivObstaclePreview);
+            arenaView = findViewById(R.id.arenaView);
 
-                // Notify listener
-                if (arenaView.getOnObstacleChangeListener() != null) {
-                    arenaView.getOnObstacleChangeListener().onObstacleRemoved(existing.getId());
-                }
-            }
+            btnGenerateMenu.setOnClickListener(v -> {
+                String input = etCount.getText().toString();
+                if (input.isEmpty()) return;
+                int n = Integer.parseInt(input);
 
-            Obstacle obstacleToDrag = existing != null ? existing : new Obstacle(id, -1, -1);
+                // Populate spinner with obstacle IDs
+                String[] items = new String[n];
+                for (int i = 0; i < n; i++) items[i] = String.valueOf(i + 1);
 
-            // Start drag, passing the obstacle as local state
-            View.DragShadowBuilder shadow = new View.DragShadowBuilder(v) {
+                ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
+                        android.R.layout.simple_spinner_item, items);
+                adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+                spinner.setAdapter(adapter);
+            });
+
+            spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
                 @Override
-                public void onProvideShadowMetrics(Point size, Point touch) {
-                    // Make the shadow bigger than the view
-                    int width = (int) (v.getWidth() * 1.5f);
-                    int height = (int) (v.getHeight() * 1.5f);
-                    size.set(width, height);
+                public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                    int obstacleId = position + 1;
 
-                    // Position the touch point at the center of the shadow
-                    touch.set(width / 2, height / 2);
+                    // Set preview ImageView
+                    String drawableName = "obstacle_" + obstacleId;
+                    int resId = getResources().getIdentifier(
+                            "obstacle_" + obstacleId,
+                            "drawable",
+                            getPackageName()
+                    );
+
+                    ivPreview.setImageResource(resId);
+                    ivPreview.setTag(obstacleId);
                 }
 
                 @Override
-                public void onDrawShadow(Canvas canvas) {
-                    // Draw the scaled bitmap of the view
-                    Bitmap bitmap = Bitmap.createBitmap(v.getWidth(), v.getHeight(), Bitmap.Config.ARGB_8888);
-                    Canvas c = new Canvas(bitmap);
-                    v.draw(c);
-                    Bitmap scaled = Bitmap.createScaledBitmap(bitmap, (int) (v.getWidth() * 1.5f), (int) (v.getHeight() * 1.5f), true);
-                    canvas.drawBitmap(scaled, 0, 0, null);
+                public void onNothingSelected(AdapterView<?> parent) {
                 }
-            };
+            });
 
-            v.startDragAndDrop(null, shadow, obstacleToDrag, 0);
-            return true;
-        });
+            ivPreview.setOnLongClickListener(v -> {
+                int id = (int) v.getTag();
 
-        arenaView.setOnObstaclePlacedListener(obstacle -> {
-            sendBluetoothMessage("OBSTACLE_ADD," + obstacle.getId() + "," + obstacle.getX() + "," + obstacle.getY());
-        });
+                // Check if obstacle with this ID already exists in arena
+                Obstacle existing = arena.getObstacleById(id);
 
-        arena = new Arena(10, 10); // 10x10 grid
-        Robot robot = new Robot(0, 0, Robot.Direction.N);
-        arena.setRobot(robot);
-        tvRobotCoord.setText("(" + robot.getX() + "," + robot.getY() + ")");
-        tvRobotDir.setText(robot.getFacing().name());
+                if (existing != null) {
+                    // Pick up existing obstacle
+                    arena.removeObstacle(existing);
+                    arenaView.invalidate();
 
+                    // Notify listener
+                    if (arenaView.getOnObstacleChangeListener() != null) {
+                        arenaView.getOnObstacleChangeListener().onObstacleRemoved(existing.getId());
+                    }
+                }
 
-        arenaView.setArena(arena);
+                Obstacle obstacleToDrag = existing != null ? existing : new Obstacle(id, -1, -1);
 
-        arenaView.setOnObstacleChangeListener(new ArenaView.OnObstacleChangeListener() {
-            @Override
-            public void onObstacleAdded(Obstacle obstacle) {
+                // Start drag, passing the obstacle as local state
+                View.DragShadowBuilder shadow = new View.DragShadowBuilder(v) {
+                    @Override
+                    public void onProvideShadowMetrics(Point size, Point touch) {
+                        // Make the shadow bigger than the view
+                        int width = (int) (v.getWidth() * 1.5f);
+                        int height = (int) (v.getHeight() * 1.5f);
+                        size.set(width, height);
+
+                        // Position the touch point at the center of the shadow
+                        touch.set(width / 2, height / 2);
+                    }
+
+                    @Override
+                    public void onDrawShadow(Canvas canvas) {
+                        // Draw the scaled bitmap of the view
+                        Bitmap bitmap = Bitmap.createBitmap(v.getWidth(), v.getHeight(), Bitmap.Config.ARGB_8888);
+                        Canvas c = new Canvas(bitmap);
+                        v.draw(c);
+                        Bitmap scaled = Bitmap.createScaledBitmap(bitmap, (int) (v.getWidth() * 1.5f), (int) (v.getHeight() * 1.5f), true);
+                        canvas.drawBitmap(scaled, 0, 0, null);
+                    }
+                };
+
+                v.startDragAndDrop(null, shadow, obstacleToDrag, 0);
+                return true;
+            });
+
+            arenaView.setOnObstaclePlacedListener(obstacle -> {
                 sendBluetoothMessage("OBSTACLE_ADD," + obstacle.getId() + "," + obstacle.getX() + "," + obstacle.getY());
+            });
+
+            arena = new Arena(10, 10); // 10x10 grid
+            arenaView.setArena(arena);
+
+            arenaView.setOnObstacleChangeListener(new ArenaView.OnObstacleChangeListener() {
+                @Override
+                public void onObstacleAdded(Obstacle obstacle) {
+                    sendBluetoothMessage("OBSTACLE_ADD," + obstacle.getId() + "," + obstacle.getX() + "," + obstacle.getY());
+                }
+
+                @Override
+                public void onObstacleRemoved(int obstacleId) {
+                    sendBluetoothMessage("OBSTACLE_REMOVE," + obstacleId);
+                }
+
+                @Override
+                public void onObstacleMoved(Obstacle obstacle) {
+                    sendBluetoothMessage("OBSTACLE_MOVE," + obstacle.getId() + "," + obstacle.getX() + "," + obstacle.getY());
+                }
+
+                @Override
+                public void onObstacleFaceAdded(Obstacle obstacle) {
+                    sendBluetoothMessage("OBSTACLE_FACE," + obstacle.getId() + "," + obstacle.getTargetFace().name());
+                }
+
+                @Override
+                public void onObstacleFaceRemoved(Obstacle obstacle) {
+                    sendBluetoothMessage("OBSTACLE_FACE_REMOVE," + obstacle.getId());
+                }
+
+            });
+
+        }
+
+        @Override
+        protected void onDestroy () {
+            super.onDestroy();
+            if (bound) {
+                if (bluetoothService != null) {
+                    bluetoothService.removeListener(bluetoothListener);
+                }
+                unbindService(connection);
+                bound = false;
             }
+        }
 
-            @Override
-            public void onObstacleRemoved(int obstacleId) {
-                sendBluetoothMessage("OBSTACLE_REMOVE," + obstacleId);
+        private void sendBluetoothMessage (String message){
+            if (bluetoothService != null) {
+                BluetoothService.ConnectedThread thread = bluetoothService.getConnectedThread();
+                if (thread != null) {
+                    thread.write(message.getBytes());
+                }
             }
-
-            @Override
-            public void onObstacleMoved(Obstacle obstacle) {
-                sendBluetoothMessage("OBSTACLE_MOVE," + obstacle.getId() + "," + obstacle.getX() + "," + obstacle.getY());
-            }
-        });
-
-    }
-
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        if (bound) {
-            unbindService(connection);
-            bound = false;
         }
     }
-
-    private void sendBluetoothMessage(String message) {
-        if (bluetoothService != null) {
-            BluetoothService.ConnectedThread thread = bluetoothService.getConnectedThread();
-            if (thread != null) {
-                thread.write(message.getBytes());
-            }
-        }
-    }
-}

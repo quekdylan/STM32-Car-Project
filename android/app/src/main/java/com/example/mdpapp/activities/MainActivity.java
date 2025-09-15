@@ -48,6 +48,7 @@ public class MainActivity extends AppCompatActivity {
     private ArrayAdapter<String> pairedAdapter, nearbyAdapter;
     private final int discoverable_duration = 300; // 300 seconds = 5 minutes
     // BroadcastReceiver to listen for Bluetooth state changes
+    private BluetoothService.OnMessageReceivedListener bluetoothListener;
 
     private final BroadcastReceiver bluetoothStateReceiver = new BroadcastReceiver() {
         @Override
@@ -100,6 +101,12 @@ public class MainActivity extends AppCompatActivity {
             BluetoothService.LocalBinder binder = (BluetoothService.LocalBinder) service;
             bluetoothService = binder.getService();
             isServiceBound = true;
+            bluetoothListener = message -> runOnUiThread(() -> {
+                if (message.startsWith("STATUS:")) {
+                    Toast.makeText(MainActivity.this, message, Toast.LENGTH_SHORT).show();
+                }
+            });
+            bluetoothService.addListener(bluetoothListener);
 
             // Set switch state
             switchBluetooth.setChecked(bluetoothService.isBluetoothEnabled());
@@ -249,6 +256,10 @@ public class MainActivity extends AppCompatActivity {
         super.onStop();
         unregisterReceiver(bluetoothStateReceiver);
         unregisterReceiver(deviceFoundReceiver);
+        if (bluetoothService != null && bluetoothListener != null) {
+            bluetoothService.removeListener(bluetoothListener);
+            bluetoothListener = null;
+        }
     }
 
     @SuppressLint("MissingPermission")
