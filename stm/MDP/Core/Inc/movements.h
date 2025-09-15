@@ -2,12 +2,23 @@
 #pragma once
 #include <stdint.h>
 
-typedef enum {
-  SPEED_MODE_1 = 1,
-  SPEED_MODE_2 = 2
-} speed_mode_t;
+// Start a straight movement for the given distance in centimeters.
+// Positive = forward, Negative = backward.
+void move_start_straight(float distance_cm);
 
-void move_start_straight(float distance_cm, speed_mode_t mode);
+// Start a 90-degree in-place turn using the IMU for feedback.
+// dir: 'L' or 'l' for left (CCW), 'R' or 'r' for right (CW).
+void move_start_turn(char dir);
+
+// Abort an ongoing move and stop motors immediately.
 void move_abort(void);
+
+// Returns non-zero if a movement is currently active.
 uint8_t move_is_active(void);
-void move_tick_100Hz(void);   // call every 10 ms from your control task
+
+// Call this at 100 Hz (every 10 ms) while a movement is active.
+void move_tick_100Hz(void);
+
+// Configure fixed accel/decel distances (in centimeters)
+void move_set_profile_distances_cm(float accel_cm, float decel_cm);
+void move_get_profile_distances_cm(float *accel_cm, float *decel_cm);

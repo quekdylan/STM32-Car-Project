@@ -82,7 +82,7 @@ const osThreadAttr_t MotorTask_attributes = {
 osThreadId_t encoderTaskHandle;
 const osThreadAttr_t encoderTask_attributes = {
   .name = "encoderTask",
-  .stack_size = 128 * 4,
+  .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for control_Task */
@@ -110,6 +110,12 @@ const osThreadAttr_t userButton_Task_attributes = {
 // Global servo object for use by defaultTask
 Servo global_steer;
 
+// Current instruction for OLED HUD (updated by MotorTask, read by encoder_task)
+static volatile char g_current_instr = '-';
+
+// Single-byte RX buffer for USART3 interrupt-driven reception
+static uint8_t uart3_rx_byte = 0;
+
 
 /* USER CODE END PV */
 
@@ -128,34 +134,11 @@ void StartDefaultTask(void *argument);
 void motor(void *argument);
 void encoder_task(void *argument);
 void controlTask(void *argument);
-void servoTask(void *argument);
-void userButtonTask(void *argument);
+ void servoTask(void *argument);
+ void userButtonTask(void *argument);
 
-/* USER CODE BEGIN PFP */
-
-/* USER CODE END PFP */
-
-/* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
-// UART3 RX byte buffer (interrupt-driven)
-static uint8_t uart3_rx_byte = 0;
-
-/* USER CODE END 0 */
-
-/**
-  * @brief  The application entry point.
-  * @retval int
-  */
 int main(void)
 {
-
-  /* USER CODE BEGIN 1 */
-
-  /* USER CODE END 1 */
-
-  /* MCU Configuration--------------------------------------------------------*/
-
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
 
   /* USER CODE BEGIN Init */
@@ -763,9 +746,9 @@ static volatile uint8_t  g_move_active = 0;
 extern volatile int32_t g_move_target_left_ticks; // set this when you start a straight move
 
 // Encoder conversion for your setup (6.6 cm wheel, 330 PPR, x2 edges = 660 counts/rev)
-static const float WHEEL_CIRC_CM   = 3.1415926f * 6.7f;         // ≈ 20.735 cm
-static const float COUNTS_PER_REV  = 660.0f;                    // rising-edge x2
-static const float TICKS_PER_CM    = COUNTS_PER_REV / WHEEL_CIRC_CM; // ≈ 31.8
+static const float WHEEL_CIRC_CM   = 3.1415926f * 6.6f;         // ≈ 20.735 cm
+static const float COUNTS_PER_REV  = 1560.0f;                    // calibration
+static const float TICKS_PER_CM    = COUNTS_PER_REV / WHEEL_CIRC_CM;
 /* USER CODE END PV */
 /* USER CODE END 4 */
 
@@ -798,6 +781,7 @@ void StartDefaultTask(void *argument)
   /* USER CODE END 5 */
 }
 
+
 /* USER CODE BEGIN Header_motor */
 /**
 * @brief Function implementing the MotorTask thread.
@@ -808,92 +792,64 @@ void StartDefaultTask(void *argument)
 void motor(void *argument)
 {
   /* USER CODE BEGIN motor */
-  // Simple sequence in MotorTask with IMU + PID1 correction:
-  // wait button → go straight 50 cm with gyro correction → servo right turn → center
 
-  // Initialize servo on TIM8 CH1 (50 Hz, 20 µs tick, 1000-1500-2300 µs limits)
-  Servo_Attach(&global_steer, &htim8, TIM_CHANNEL_1, 20.0f, 1000, 1500, 2300);
+// Initialize servo on TIM8 CH1. Compute tick_us from current timer clock and prescaler.
+{
+  uint32_t pclk2 = HAL_RCC_GetPCLK2Freq();
+  // On STM32F4, timer clock on APB2 is doubled when APB2 prescaler > 1.
+  // HAL doesn't expose current divider easily; assume standard Cube defaults where APB2 prescaler == 1.
+  // If you change APB2 prescaler later, update this to reflect doubling.
+  uint32_t timclk = pclk2; // adjust to pclk2*2 if APB2 prescaler > 1
+  float tick_us = ((float)(htim8.Init.Prescaler + 1U)) * (1000000.0f / (float)timclk);
+  // Example with HSI=16MHz, APB2=16MHz, PSC=319 => tick_us ~ 20.0, ARR=999 => 50 Hz PWM
+  Servo_Attach(&global_steer, &htim8, TIM_CHANNEL_1, tick_us, 1000, 1500, 2000);
+}
+
   if (Servo_Start(&global_steer) != HAL_OK) {
     for(;;) { osDelay(1000); }
   }
   Servo_Center(&global_steer);
 
-  // PID config (only Kp used in PID_SPEED_1)
-  pid_type_def pidStraight = {0};
-  pidStraight.Kp = 6.0f; // stronger correction; adjust if oscillation
+  // Execute instruction list once: [[S,20],[L,0],[s,10]]
+  // Define instructions
+  typedef struct { char dir; float dist_cm; } instr_t;
+  //const instr_t program[] = {{'S',20.0f}, {'L',0.0f}, {'R',0.0f}, {'S',20.0f}, {'R',0.0f}, {'L',0.0f}, {'s',120.0f}};
+  const instr_t program[] = {{'S',120.0f}};
+  const int program_len = sizeof(program)/sizeof(program[0]);
 
-  // Button edge detector (use helper that returns 1 when pressed)
-  uint8_t prev = user_is_pressed();
+  for (int i = 0; i < program_len; ++i) {
+    char d = program[i].dir;
+    float cm = program[i].dist_cm;
 
-  for(;;) {
-    uint8_t now = user_is_pressed();
-    if (!prev && now) {
-      // 1) Go straight for 50 cm with gyro correction
-      const float target_cm = 150.0f;
-      const int32_t target_ticks = (int32_t)(target_cm * TICKS_PER_CM + 0.5f);
-
-      // Reset encoders and yaw reference
-      motor_reset_encoders();
-      imu_zero_yaw();
-
-      // 100 Hz control loop while approaching distance target
-      uint32_t last10 = HAL_GetTick();
-      uint32_t t0 = last10;
-
-      while (1) {
-        // Distance check
-        int32_t left = motor_get_left_encoder_counts();
-        if (left >= target_ticks) break;
-        if ((uint32_t)(HAL_GetTick() - t0) > 7000U) break; // safety timeout ~7s
-
-        // Run at ~100 Hz
-        uint32_t nowMs = HAL_GetTick();
-        if ((uint32_t)(nowMs - last10) >= 10U) {
-          last10 += 10U;
-
-          // Update integrated yaw (deg)
-          imu_update_yaw_100Hz();
-          float angleNow = -imu_get_yaw(); // flipped sign to match steering polarity
-
-          // Compute PWM duties using PID_SPEED_2 (higher base around ~520)
-          float correction = 0.0f;
-          uint16_t dutyL = 0, dutyR = 0;
-          int8_t dir = +1; // forward
-          PID_SPEED_2(&pidStraight, angleNow, &correction, dir, &dutyL, &dutyR);
-
-          // Apply as forward drive on both motors using raw PWM counts
-          // Left (TIM4): forward = CH4=pulse, CH3=0
-          __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_4, dutyL);
-          __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_3, 0);
-          // Right (TIM9): forward = CH1=0, CH2=pulse (board wiring is reversed)
-          __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_1, 0);
-          __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_2, dutyR);
-        }
-
-        osDelay(1);
-      }
-
-      // stop motors
-      motor_stop();
-      osDelay(200);
-
-      // 2) Turn right using servo steering: steer right and drive forward briefly
-      Servo_WriteAngle(&global_steer, +95.0f); // full right
-      motor_set_speeds(20, 25);
-      osDelay(1000); // drive for 1s while steering right
-      motor_stop();
-      Servo_Center(&global_steer);
-
-      // Debounce: wait for button release before accepting next run
-      while (user_is_pressed()) { osDelay(20); }
+  g_current_instr = d; // publish current instruction for OLED
+  if (d == 'S') {
+      move_start_straight(cm);
+    } else if (d == 's') {
+      move_start_straight(-cm);
+    } else if (d == 'L' || d == 'R' || d == 'l' || d == 'r') {
+      move_start_turn(d);
+    } else {
+      // Unknown directive: stop and break
+      move_abort();
+      break;
     }
-    // No OLED updates in this simplified run
 
-    prev = now;
-    osDelay(20);
+    // Wait until current movement completes
+  while (move_is_active()) {
+      osDelay(5);
+    }
+
+  // Immediately continue to next instruction
   }
+
+  // Program complete: ensure motors are stopped
+  move_abort();
+  g_current_instr = '-';
+  for(;;) { osDelay(1000); }
   /* USER CODE END motor */
 }
+
+
 
 /* USER CODE BEGIN Header_encoder_task */
 /**
@@ -905,35 +861,50 @@ void motor(void *argument)
 void encoder_task(void *argument)
 {
   /* USER CODE BEGIN encoder_task */
-  // char buffer[32];  // Unused variable removed
+  // Update OLED at ~5 Hz; avoid printf floats to keep stack small
+  uint32_t last_tick = HAL_GetTick();
   for(;;)
   {
-    int32_t tL=0,tR=0,mL=0,mR=0;
-    control_get_target_and_measured(&tL, &tR, &mL, &mR);
-    int8_t oL=0,oR=0;
-    control_get_outputs(&oL, &oR);
+    uint32_t now = HAL_GetTick();
+    if (now - last_tick >= 200) {
+      last_tick = now;
 
+      float yawf = imu_get_yaw();
+      int32_t tL=0,tR=0,mL=0,mR=0;
+      control_get_target_and_measured(&tL, &tR, &mL, &mR);
+      char instr = g_current_instr ? g_current_instr : '-';
 
-    // OLED_Clear();
+  // Lightweight rounding to avoid libm dependency
+  int yaw10 = (int)(yawf * 10.0f + (yawf >= 0.0f ? 0.5f : -0.5f));
+      int sign = (yaw10 < 0) ? -1 : 1;
+      if (yaw10 < 0) yaw10 = -yaw10;
+      int yaw_deg = yaw10 / 10;
+      int yaw_tenth = yaw10 % 10;
 
-    // // Show left: Target/Measured
-    // sprintf(buffer, "L T/M:%ld/%ld", tL, mL);
-    // OLED_ShowString(0, 0, (uint8_t*)buffer);
-
-    // // Show right: Target/Measured
-    // sprintf(buffer, "R T/M:%ld/%ld", tR, mR);
-    // OLED_ShowString(0, 16, (uint8_t*)buffer);
-
-    // // Show PWM outputs (percent)
-    // sprintf(buffer, "L PWM:%d", (int)oL);
-    // OLED_ShowString(0, 32, (uint8_t*)buffer);
-    // sprintf(buffer, "R PWM:%d", (int)oR);
-    // OLED_ShowString(0, 48, (uint8_t*)buffer);
-
-  
-
-    // OLED_Refresh_Gram();
-    // osDelay(100);
+      OLED_Clear();
+      // Yaw
+      OLED_ShowString(0, 0, (uint8_t*)"Yaw: ");
+      OLED_ShowChar(40, 0, (sign < 0) ? '-' : ' ', 12, 1);
+      OLED_ShowNumber(48, 0, (uint32_t)yaw_deg, 3, 12);
+      OLED_ShowChar(72, 0, '.', 12, 1);
+      OLED_ShowChar(80, 0, (char)('0' + yaw_tenth), 12, 1);
+      OLED_ShowString(88, 0, (uint8_t*)" deg");
+      // Instruction
+      OLED_ShowString(0, 16, (uint8_t*)"Instr: ");
+      OLED_ShowChar(48, 16, instr, 12, 1);
+      // Targets
+      OLED_ShowString(0, 32, (uint8_t*)"T:");
+      OLED_ShowNumber(16, 32, (uint32_t)(tL & 0x7FFFFFFF), 4, 12);
+      OLED_ShowChar(48, 32, ',', 12, 1);
+      OLED_ShowNumber(56, 32, (uint32_t)(tR & 0x7FFFFFFF), 4, 12);
+      // Measured
+      OLED_ShowString(0, 48, (uint8_t*)"M:");
+      OLED_ShowNumber(16, 48, (uint32_t)(mL & 0x7FFFFFFF), 4, 12);
+      OLED_ShowChar(48, 48, ',', 12, 1);
+      OLED_ShowNumber(56, 48, (uint32_t)(mR & 0x7FFFFFFF), 4, 12);
+      OLED_Refresh_Gram();
+    }
+    osDelay(5);
   }
   /* USER CODE END encoder_task */
 }
@@ -948,8 +919,16 @@ void encoder_task(void *argument)
 void controlTask(void *argument)
 {
   /* USER CODE BEGIN controlTask */
-  // Not used for this test scenario
-  for(;;) { osDelay(50); }
+  // Run the 100 Hz speed control loop when due
+  for(;;) {
+    if (control_is_due()) {
+      control_step();
+  // Tick movement planner at the same 100 Hz cadence
+  move_tick_100Hz();
+      control_clear_due();
+    }
+    osDelay(1);
+  }
   /* USER CODE END controlTask */
 }
 

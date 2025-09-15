@@ -213,11 +213,13 @@ void ICM20948_init(I2C_HandleTypeDef *hi2c, uint8_t selectI2cAddress, uint8_t se
     status = _ICM20948_SelectUserBank(hi2c, selectI2cAddress, USER_BANK_2);
 
     // Configure gyroscope
+    // Note: selectGyroSensitivity constants are already pre-shifted to bits [2:1].
+    // Do NOT shift again here.
     status = _ICM20948_WriteByte(
         hi2c,
         selectI2cAddress,
         ICM20948__USER_BANK_2__GYRO_CONFIG_1__REGISTER,
-        3 << GYRO_DLPFCFG_BIT | selectGyroSensitivity << BIT_1 | EN_GRYO_DLPF << GYRO_FCHOICE_BIT);
+        (3 << GYRO_DLPFCFG_BIT) | (selectGyroSensitivity) | (EN_GRYO_DLPF << GYRO_FCHOICE_BIT));
 
     // Configure accelerometer (enable and set sensitivity)
     status = _ICM20948_WriteByte(

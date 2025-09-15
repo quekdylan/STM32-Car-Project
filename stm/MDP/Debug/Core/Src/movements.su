@@ -1,4 +1,8 @@
-../Core/Src/movements.c:40:6:move_start_straight	40	static
-../Core/Src/movements.c:62:6:move_abort	8	static
-../Core/Src/movements.c:68:9:move_is_active	4	static
-../Core/Src/movements.c:74:6:move_tick_100Hz	40	static
+../Core/Inc/servo.h:46:20:Servo_Center	16	static
+../Core/Src/movements.c:81:9:move_is_active	4	static
+../Core/Src/movements.c:85:6:move_abort	8	static
+../Core/Src/movements.c:93:6:move_start_straight	32	static
+../Core/Src/movements.c:132:6:move_start_turn	24	static
+../Core/Src/movements.c:168:6:move_tick_100Hz	88	static
+../Core/Src/movements.c:269:6:move_set_profile_distances_cm	16	static
+../Core/Src/movements.c:277:6:move_get_profile_distances_cm	16	static
