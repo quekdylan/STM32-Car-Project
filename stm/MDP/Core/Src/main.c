@@ -110,6 +110,10 @@ const osThreadAttr_t userButton_Task_attributes = {
 // Global servo object for use by defaultTask
 Servo global_steer;
 
+// Current high-level instruction being executed (e.g., 'S','L','R','s','r').
+// 0 means none; shown as '-' on OLED.
+volatile char g_current_instr = 0;
+
 
 /* USER CODE END PV */
 
@@ -813,13 +817,12 @@ void motor(void *argument)
 // Initialize servo on TIM8 CH1. Compute tick_us from current timer clock and prescaler.
 {
   uint32_t pclk2 = HAL_RCC_GetPCLK2Freq();
-  // On STM32F4, timer clock on APB2 is doubled when APB2 prescaler > 1.
-  // HAL doesn't expose current divider easily; assume standard Cube defaults where APB2 prescaler == 1.
-  // If you change APB2 prescaler later, update this to reflect doubling.
-  uint32_t timclk = pclk2; // adjust to pclk2*2 if APB2 prescaler > 1
+  uint32_t timclk = pclk2; // APB2 prescaler = 1
   float tick_us = ((float)(htim8.Init.Prescaler + 1U)) * (1000000.0f / (float)timclk);
   // Example with HSI=16MHz, APB2=16MHz, PSC=319 => tick_us ~ 20.0, ARR=999 => 50 Hz PWM
-  Servo_Attach(&global_steer, &htim8, TIM_CHANNEL_1, tick_us, 1000, 1500, 2000);
+
+  // L/R Turn radius at 100% ~ 20cm
+  Servo_Attach(&global_steer, &htim8, TIM_CHANNEL_1, tick_us, 1050, 1500, 2600);
 }
 
   if (Servo_Start(&global_steer) != HAL_OK) {
@@ -830,12 +833,17 @@ void motor(void *argument)
   // Execute instruction list once: [[S,20],[L,0],[s,10]]
   // Define instructions
   typedef struct { char dir; float dist_cm; } instr_t;
-  const instr_t program[] = {{'S',100.0f}};
+  /////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  const instr_t program[] = {{'S',20.0f}, {'L',50.0f}, {'L',50.0f}};
+  /////////////////////////////////////////////////////////////////////////////////////////////////////////////
   const int program_len = sizeof(program)/sizeof(program[0]);
 
   for (int i = 0; i < program_len; ++i) {
     char d = program[i].dir;
     float cm = program[i].dist_cm;
+
+    // expose current instruction to OLED task
+    g_current_instr = d;
 
     if (d == 'S') {
       move_start_straight(cm);
@@ -844,8 +852,11 @@ void motor(void *argument)
     } else if (d == 'L' || d == 'R' || d == 'l' || d == 'r') {
       move_start_turn(d);
     } else {
-      // Unknown directive: stop and break
-      move_abort();
+      // Unknown directive: brake and stop, then break
+      control_set_target_ticks_per_dt(0, 0);
+      motor_brake_ms(80);
+      motor_stop();
+      g_current_instr = 0;
       break;
     }
 
@@ -855,10 +866,14 @@ void motor(void *argument)
     }
 
   // Immediately continue to next instruction
+    g_current_instr = 0; // clear between instructions
   }
 
-  // Program complete: ensure motors are stopped
-  move_abort();
+  // Program complete: no instructions left — brake and stop
+  control_set_target_ticks_per_dt(0, 0);
+  motor_brake_ms(80);
+  motor_stop();
+  g_current_instr = 0;
   for(;;) { osDelay(1000); }
   /* USER CODE END motor */
 }
@@ -875,35 +890,64 @@ void motor(void *argument)
 void encoder_task(void *argument)
 {
   /* USER CODE BEGIN encoder_task */
-  // char buffer[32];  // Unused variable removed
+  // Update OLED at ~5 Hz; initialize static layout once, then update dynamic values only
+  uint32_t last_tick = HAL_GetTick();
+
+  // Static layout (draw once)
+  OLED_Clear();
+  OLED_ShowString(0, 0, (uint8_t*)"Yaw: ");
+  OLED_ShowString(88, 0, (uint8_t*)" deg");
+  OLED_ShowString(0, 16, (uint8_t*)"Instr: ");
+  OLED_ShowString(0, 32, (uint8_t*)"T:");
+  OLED_ShowChar(48, 32, ',', 12, 1);
+  OLED_ShowString(0, 48, (uint8_t*)"M:");
+  OLED_ShowChar(48, 48, ',', 12, 1);
+  OLED_Refresh_Gram();
+
   for(;;)
   {
-    int32_t tL=0,tR=0,mL=0,mR=0;
-    control_get_target_and_measured(&tL, &tR, &mL, &mR);
-    int8_t oL=0,oR=0;
-    control_get_outputs(&oL, &oR);
+    uint32_t now = HAL_GetTick();
+    if (now - last_tick >= 200) {
+      last_tick = now;
 
+      float yawf = imu_get_yaw();
+      int32_t tL=0,tR=0,mL=0,mR=0;
+      control_get_target_and_measured(&tL, &tR, &mL, &mR);
+      char instr = g_current_instr ? g_current_instr : '-';
 
-    // OLED_Clear();
+      // Lightweight rounding to avoid libm dependency
+      int yaw10 = (int)(yawf * 10.0f + (yawf >= 0.0f ? 0.5f : -0.5f));
+      int sign = (yaw10 < 0) ? -1 : 1;
+      if (yaw10 < 0) yaw10 = -yaw10;
+      int yaw_deg = yaw10 / 10;
+      int yaw_tenth = yaw10 % 10;
 
-    // // Show left: Target/Measured
-    // sprintf(buffer, "L T/M:%ld/%ld", tL, mL);
-    // OLED_ShowString(0, 0, (uint8_t*)buffer);
+      // Dynamic updates only (no full clear)
+      // Yaw
+      OLED_ShowChar(40, 0, (sign < 0) ? '-' : ' ', 12, 1);
+      OLED_ShowNumber(48, 0, (uint32_t)yaw_deg, 3, 12);
+      OLED_ShowChar(72, 0, '.', 12, 1);
+      OLED_ShowChar(80, 0, (char)('0' + yaw_tenth), 12, 1);
 
-    // // Show right: Target/Measured
-    // sprintf(buffer, "R T/M:%ld/%ld", tR, mR);
-    // OLED_ShowString(0, 16, (uint8_t*)buffer);
+      // Instruction
+      OLED_ShowChar(48, 16, instr, 12, 1);
 
-    // // Show PWM outputs (percent)
-    // sprintf(buffer, "L PWM:%d", (int)oL);
-    // OLED_ShowString(0, 32, (uint8_t*)buffer);
-    // sprintf(buffer, "R PWM:%d", (int)oR);
-    // OLED_ShowString(0, 48, (uint8_t*)buffer);
+  // Targets: clear small areas first to avoid ghosting, then draw (show absolute ticks)
+      OLED_ShowString(16, 32, (uint8_t*)"    ");
+      OLED_ShowString(56, 32, (uint8_t*)"    ");
+  OLED_ShowNumber(16, 32, (uint32_t)(tL < 0 ? -tL : tL), 4, 12);
+  OLED_ShowNumber(56, 32, (uint32_t)(tR < 0 ? -tR : tR), 4, 12);
 
-  
+  // Measured: clear small areas first to avoid ghosting, then draw (show absolute ticks)
+      OLED_ShowString(16, 48, (uint8_t*)"    ");
+      OLED_ShowString(56, 48, (uint8_t*)"    ");
+  OLED_ShowNumber(16, 48, (uint32_t)(mL < 0 ? -mL : mL), 4, 12);
+  OLED_ShowNumber(56, 48, (uint32_t)(mR < 0 ? -mR : mR), 4, 12);
 
-    // OLED_Refresh_Gram();
-    // osDelay(100);
+      // Refresh
+      OLED_Refresh_Gram();
+    }
+    osDelay(5);
   }
   /* USER CODE END encoder_task */
 }

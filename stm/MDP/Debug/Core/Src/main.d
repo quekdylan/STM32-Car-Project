@@ -44,7 +44,7 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Core/Inc/main.h ../Core/Inc/servo.h ../Core/Inc/ICM20948.h \
  ../Core/Inc/ICM20948_ADDR.h ../Core/Inc/ICM20948_OPTIONS.h \
  ../Core/Inc/motor.h ../Core/Inc/pid.h ../Core/Inc/movements.h \
- ../Core/Inc/sensor.h ../Core/Inc/imu.h
+ ../Core/Inc/imu.h
 ../Core/Inc/main.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h:
 ../Core/Inc/stm32f4xx_hal_conf.h:
@@ -98,5 +98,4 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Core/Inc/motor.h:
 ../Core/Inc/pid.h:
 ../Core/Inc/movements.h:
-../Core/Inc/sensor.h:
 ../Core/Inc/imu.h:

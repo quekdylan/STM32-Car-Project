@@ -60,6 +60,21 @@ void control_init(void)
 
 void control_set_target_ticks_per_dt(int32_t left_ticks, int32_t right_ticks)
 {
+    // If direction flips (sign change), clear integrators to avoid fighting previous windup
+    if ((left_ticks == 0 || target_left_ticks_dt == 0) ? 0 : ((left_ticks > 0) != (target_left_ticks_dt > 0))) {
+        PID_clear(&pid_left);
+    }
+    if ((right_ticks == 0 || target_right_ticks_dt == 0) ? 0 : ((right_ticks > 0) != (target_right_ticks_dt > 0))) {
+        PID_clear(&pid_right);
+    }
+
+    // If transitioning to zero target from non-zero, clear integrators to prevent residual drive
+    if (left_ticks == 0 && target_left_ticks_dt != 0) {
+        PID_clear(&pid_left);
+    }
+    if (right_ticks == 0 && target_right_ticks_dt != 0) {
+        PID_clear(&pid_right);
+    }
     target_left_ticks_dt = left_ticks;
     target_right_ticks_dt = right_ticks;
 }
@@ -96,18 +111,14 @@ void control_step(void)
     meas_left_ticks_dt = dl;
     meas_right_ticks_dt = dr;
 
-    // If targets are zero, aggressively stop and clear integrators to avoid creep
+    // If targets are zero, unconditionally stop and clear integrators to avoid creep
     if (target_left_ticks_dt == 0 && target_right_ticks_dt == 0) {
-        // If measured speed is effectively zero, hold motors off and clear PID
-        if ((dl >= -1 && dl <= 1) && (dr >= -1 && dr <= 1)) {
-            PID_clear(&pid_left);
-            PID_clear(&pid_right);
-            last_cmd_left = 0;
-            last_cmd_right = 0;
-            motor_stop();
-            return;
-        }
-        // Otherwise fall through to let PID arrest any residual motion
+        PID_clear(&pid_left);
+        PID_clear(&pid_right);
+        last_cmd_left = 0;
+        last_cmd_right = 0;
+        motor_stop();
+        return;
     }
 
     // Compute PID outputs (PWM percent)
