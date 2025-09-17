@@ -1,3 +1,4 @@
+
 # STM32 Firmware Documentation
 
 This document provides a comprehensive overview of the STM32 firmware for the MDP Group 19 robot, including tunable parameters and important file descriptions.
@@ -49,30 +50,15 @@ The following table lists all configurable parameters in the codebase:
 | **AHRS Filter** |
 | `s_beta` | Madgwick filter gain (convergence rate) | `MDP/Core/Src/madgwick.c:8` | `0.1f` |
 | `s_dt` | Madgwick sample period (seconds) | `MDP/Core/Src/madgwick.c:9` | `0.01f` |
-| **Sensor Configuration** |
-| `SPEED_OF_SOUND_CM_PER_US` | Sound speed for ultrasonic sensor | `MDP/Core/Src/sensor.c:12` | `0.0343f` |
-| **Timer Configurations** |
-| TIM5 Prescaler | Control loop timer prescaler | `MDP/Core/Src/main.c:513` | `1599` |
-| TIM5 Period | Control loop timer period | `MDP/Core/Src/main.c:515` | `99` |
-| TIM4 Period | Left motor PWM period | `MDP/Core/Src/main.c:453` | `799` |
-| TIM9 Period | Right motor PWM period | `MDP/Core/Src/main.c:635` | `799` |
-| TIM8 Prescaler | Servo PWM prescaler | `MDP/Core/Src/main.c:560` | `15` |
-| TIM8 Period | Servo PWM period | `MDP/Core/Src/main.c:562` | `19999` |
 | **Servo Configuration** |
 | Servo Min Pulse | Minimum servo pulse width (μs) | `MDP/Core/Src/main.c:835` | `1050` |
 | Servo Center Pulse | Center servo pulse width (μs) | `MDP/Core/Src/main.c:835` | `1500` |
 | Servo Max Pulse | Maximum servo pulse width (μs) | `MDP/Core/Src/main.c:835` | `2600` |
 | **OLED Display** |
 | OLED Update Delay | Display refresh period (ms) | Various tasks in `main.c` | `100` |
-| **FreeRTOS Tasks** |
-| Default Task Stack | Default task stack size (words) | `MDP/Core/Src/main.c:72` | `512` |
-| Motor Task Stack | Motor task stack size (words) | `MDP/Core/Src/main.c:79` | `512` |
-| Encoder Task Stack | Encoder display task stack size | `MDP/Core/Src/main.c:86` | `512` |
-| Default Task Priority | Main task priority level | `MDP/Core/Src/main.c:73` | `osPriorityNormal` |
-| Motor Task Priority | Motor control task priority | `MDP/Core/Src/main.c:80` | `osPriorityAboveNormal` |
-| Encoder Task Priority | Display task priority | `MDP/Core/Src/main.c:87` | `osPriorityLow` |
 
-## Important Files Overview
+
+## Overview
 
 ### Core Control Files
 
@@ -251,11 +237,10 @@ The following table lists all configurable parameters in the codebase:
 #### `MDP/Core/Src/main.c`
 **Purpose**: Main application entry point with hardware initialization and FreeRTOS tasks.
 
-**Key Functions**:
-- `main()`: System initialization and RTOS startup
-- `SystemClock_Config()`: Clock configuration
-- Timer initialization functions (`MX_TIM*_Init()`)
-- FreeRTOS task functions for different subsystems
+**Key Tasks**:
+- `StartDefaultTask()`: Main program logic (Await button press > Calibrate sensors > Perform instructions)
+- `control_task()`: 100 Hz PID control for responsive speed regulation
+- `oled_task()`: Handles OLED display
 
 **Important Features**:
 - Complete hardware peripheral initialization
@@ -300,7 +285,7 @@ The following table lists all configurable parameters in the codebase:
 ### System Architecture
 - **Control Loop**: 100 Hz PID control provides responsive speed regulation
 - **Movement Planning**: High-level trajectory generation with sensor feedback
-- **Sensor Fusion**: IMU and encoder data combined for accurate navigation
+- **Sensor Fusion**: IMU and encoder data combined for accurate navigation (not used)
 - **Modular Design**: Clear separation between low-level control and high-level planning
 
 ### Debugging Tips
