@@ -1,5 +1,7 @@
 #include "imu.h"
 #include "ICM20948.h"
+#include <math.h>
+#include <float.h>
 
 // =======================
 // Module state
@@ -8,6 +10,25 @@ static I2C_HandleTypeDef *s_imu_i2c = NULL;
 static uint8_t  s_addrSel     = 0;     // 0 => 0x68, 1 => 0x69
 static float    s_yaw_deg     = 0.0f;  // integrated heading (deg, wrapped to [-180,180])
 static float    s_gyro_bias_z = 0.0f;  // bias in deg/s (for Z axis)
+static uint8_t  s_mag_ready   = 0;     // magnetometer enabled flag
+
+typedef struct {
+    float min_x;
+    float max_x;
+    float min_y;
+    float max_y;
+    uint8_t have_range;
+} mag_calib_t;
+
+static mag_calib_t s_mag_cal;
+
+static void mag_cal_reset_(void){
+    s_mag_cal.min_x = FLT_MAX;
+    s_mag_cal.max_x = -FLT_MAX;
+    s_mag_cal.min_y = FLT_MAX;
+    s_mag_cal.max_y = -FLT_MAX;
+    s_mag_cal.have_range = 0;
+}
 
 // 100 Hz update period
 #define IMU_DT_S 0.01f
@@ -67,6 +88,14 @@ void imu_init(I2C_HandleTypeDef *hi2c, uint8_t *out_addrSel){
 
     // Start from zero heading
     s_yaw_deg = 0.0f;
+
+    // Enable magnetometer (non-fatal if fails)
+    if (ICM20948_mag_enable(hi2c, s_addrSel) == 0) {
+        s_mag_ready = 1;
+        mag_cal_reset_();
+    } else {
+        s_mag_ready = 0;
+    }
 }
 
 float imu_get_yaw(void){
@@ -76,6 +105,57 @@ float imu_get_yaw(void){
 // Optional helper: zero current yaw (e.g., when you want "forward" to be current heading)
 void imu_zero_yaw(void){
     s_yaw_deg = 0.0f;
+}
+
+void imu_mag_reset_calibration(void){
+    mag_cal_reset_();
+}
+
+int imu_read_temperature_c(float *temp_c){
+    if (!s_imu_i2c || !temp_c) return -1;
+    int16_t raw = 0;
+    ICM20948_readTemperature(s_imu_i2c, s_addrSel, &raw);
+    // Datasheet: Temp (°C) = (raw / 333.87) + 21
+    *temp_c = ((float)raw / 333.87f) + 21.0f;
+    return 0;
+}
+
+int imu_read_mag_heading_deg(float *heading_deg){
+    if (!s_mag_ready || !heading_deg) return -1;
+    int16_t mx=0,my=0,mz=0;
+    if (ICM20948_mag_read_raw(s_imu_i2c, s_addrSel, &mx, &my, &mz) != 0) return -2;
+    // Simple heading from X/Y (adjust sign/orientation as needed). atan2(y, x)
+    float hx = (float)mx;
+    float hy = (float)my;
+
+    if (hx < s_mag_cal.min_x) s_mag_cal.min_x = hx;
+    if (hx > s_mag_cal.max_x) s_mag_cal.max_x = hx;
+    if (hy < s_mag_cal.min_y) s_mag_cal.min_y = hy;
+    if (hy > s_mag_cal.max_y) s_mag_cal.max_y = hy;
+
+    float span_x = s_mag_cal.max_x - s_mag_cal.min_x;
+    float span_y = s_mag_cal.max_y - s_mag_cal.min_y;
+
+    if (span_x > 50.0f && span_y > 50.0f) {
+        s_mag_cal.have_range = 1;
+    }
+
+    if (s_mag_cal.have_range) {
+        float bias_x = 0.5f * (s_mag_cal.max_x + s_mag_cal.min_x);
+        float bias_y = 0.5f * (s_mag_cal.max_y + s_mag_cal.min_y);
+        hx -= bias_x;
+        hy -= bias_y;
+
+        float avg_span = 0.5f * (span_x + span_y);
+        if (span_x > 1e-3f) hx *= avg_span / span_x;
+        if (span_y > 1e-3f) hy *= avg_span / span_y;
+    }
+
+    float rad = atan2f(hy, hx); // -pi .. pi
+    float deg = rad * (180.0f / 3.14159265358979323846f);
+    if (deg < 0) deg += 360.0f;
+    *heading_deg = deg;
+    return 0;
 }
 
 // Read instantaneous Z gyro rate in deg/s (bias-removed, with small deadband)

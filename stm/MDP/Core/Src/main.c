@@ -821,7 +821,7 @@ void motor(void *argument)
   float tick_us = ((float)(htim8.Init.Prescaler + 1U)) * (1000000.0f / (float)timclk);
   // Example with HSI=16MHz, APB2=16MHz, PSC=319 => tick_us ~ 20.0, ARR=999 => 50 Hz PWM
 
-  // L/R Turn radius at 100% ~ 20cm
+  // L/R Turn radius at 100% ~ 25-30cm
   Servo_Attach(&global_steer, &htim8, TIM_CHANNEL_1, tick_us, 1050, 1500, 2600);
 }
 
@@ -834,7 +834,7 @@ void motor(void *argument)
   // Define instructions
   typedef struct { char dir; float dist_cm; } instr_t;
   /////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  const instr_t program[] = {{'S',20.0f}, {'L',50.0f}, {'L',50.0f}};
+  const instr_t program[] = {{'S',200.0f},{'l', 0.0f},{'R',0.0f}, {'S',140.0f}};
   /////////////////////////////////////////////////////////////////////////////////////////////////////////////
   const int program_len = sizeof(program)/sizeof(program[0]);
 
@@ -897,11 +897,8 @@ void encoder_task(void *argument)
   OLED_Clear();
   OLED_ShowString(0, 0, (uint8_t*)"Yaw: ");
   OLED_ShowString(88, 0, (uint8_t*)" deg");
-  OLED_ShowString(0, 16, (uint8_t*)"Instr: ");
-  OLED_ShowString(0, 32, (uint8_t*)"T:");
-  OLED_ShowChar(48, 32, ',', 12, 1);
-  OLED_ShowString(0, 48, (uint8_t*)"M:");
-  OLED_ShowChar(48, 48, ',', 12, 1);
+  OLED_ShowString(0, 16, (uint8_t*)"Head: ");
+  OLED_ShowString(0, 32, (uint8_t*)"Temp:");
   OLED_Refresh_Gram();
 
   for(;;)
@@ -913,7 +910,19 @@ void encoder_task(void *argument)
       float yawf = imu_get_yaw();
       int32_t tL=0,tR=0,mL=0,mR=0;
       control_get_target_and_measured(&tL, &tR, &mL, &mR);
-      char instr = g_current_instr ? g_current_instr : '-';
+      float head_deg = -1.0f;
+      imu_read_mag_heading_deg(&head_deg);
+      float temp_c = 0.0f;
+      int temp_ok = (imu_read_temperature_c(&temp_c) == 0);
+      char temp_buf[16];
+      if (temp_ok) {
+        if (temp_c > 999.9f) temp_c = 999.9f;
+        if (temp_c < -99.9f) temp_c = -99.9f;
+        (void)snprintf(temp_buf, sizeof(temp_buf), "Temp:%5.1fC", temp_c);
+      } else {
+        (void)snprintf(temp_buf, sizeof(temp_buf), "Temp: --- ");
+      }
+      OLED_ShowString(0, 32, (uint8_t*)temp_buf);
 
       // Lightweight rounding to avoid libm dependency
       int yaw10 = (int)(yawf * 10.0f + (yawf >= 0.0f ? 0.5f : -0.5f));
@@ -929,20 +938,31 @@ void encoder_task(void *argument)
       OLED_ShowChar(72, 0, '.', 12, 1);
       OLED_ShowChar(80, 0, (char)('0' + yaw_tenth), 12, 1);
 
-      // Instruction
-      OLED_ShowChar(48, 16, instr, 12, 1);
+      // Heading (integer degrees)
+      if (head_deg < 0.0f) {
+        OLED_ShowString(48, 16, (uint8_t*)"---");
+      } else {
+        uint32_t h = (uint32_t)(head_deg + 0.5f);
+        if (h >= 360) h = 0;
+        // Clear previous area (3 chars max)
+        OLED_ShowString(48, 16, (uint8_t*)"   ");
+        OLED_ShowNumber(48, 16, h, 3, 12);
+      }
 
-  // Targets: clear small areas first to avoid ghosting, then draw (show absolute ticks)
-      OLED_ShowString(16, 32, (uint8_t*)"    ");
-      OLED_ShowString(56, 32, (uint8_t*)"    ");
-  OLED_ShowNumber(16, 32, (uint32_t)(tL < 0 ? -tL : tL), 4, 12);
-  OLED_ShowNumber(56, 32, (uint32_t)(tR < 0 ? -tR : tR), 4, 12);
-
-  // Measured: clear small areas first to avoid ghosting, then draw (show absolute ticks)
-      OLED_ShowString(16, 48, (uint8_t*)"    ");
-      OLED_ShowString(56, 48, (uint8_t*)"    ");
-  OLED_ShowNumber(16, 48, (uint32_t)(mL < 0 ? -mL : mL), 4, 12);
-  OLED_ShowNumber(56, 48, (uint32_t)(mR < 0 ? -mR : mR), 4, 12);
+      // Combined encoder targets/measured (absolute ticks)
+      uint32_t tL_abs = (tL < 0) ? (uint32_t)(-tL) : (uint32_t)tL;
+      uint32_t mL_abs = (mL < 0) ? (uint32_t)(-mL) : (uint32_t)mL;
+      uint32_t tR_abs = (tR < 0) ? (uint32_t)(-tR) : (uint32_t)tR;
+      uint32_t mR_abs = (mR < 0) ? (uint32_t)(-mR) : (uint32_t)mR;
+      if (tL_abs > 99U) tL_abs = 99U;
+      if (mL_abs > 99U) mL_abs = 99U;
+      if (tR_abs > 99U) tR_abs = 99U;
+      if (mR_abs > 99U) mR_abs = 99U;
+      char tm_buf[20];
+      (void)snprintf(tm_buf, sizeof(tm_buf), "L%02lu/%02lu R%02lu/%02lu",
+                     (unsigned long)tL_abs, (unsigned long)mL_abs,
+                     (unsigned long)tR_abs, (unsigned long)mR_abs);
+      OLED_ShowString(0, 48, (uint8_t*)tm_buf);
 
       // Refresh
       OLED_Refresh_Gram();

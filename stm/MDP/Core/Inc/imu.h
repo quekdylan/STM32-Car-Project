@@ -21,4 +21,13 @@ void Gyro_Read_Z(I2C_HandleTypeDef *hi2c, float *gyroZ_dps);
 // Zero current yaw to 0 degrees (helper)
 void imu_zero_yaw(void);
 
+// Reset magnetometer calibration (min/max) accumulators.
+void imu_mag_reset_calibration(void);
+
+// Read IMU internal temperature in Celsius; returns 0 on success.
+int imu_read_temperature_c(float *temp_c);
+
+// Read magnetometer heading (degrees 0-359) using raw mag X/Y; returns 0 on success, non-zero on failure.
+int imu_read_mag_heading_deg(float *heading_deg);
+
 #endif /* INC_IMU_H_ */
