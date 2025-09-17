@@ -26,6 +26,15 @@
 #include "control.h"
 #include "userButton.h"
 #include "servo.h"
+#include "ICM20948.h"
+#include "motor.h"
+#include "pid.h"
+#include "movements.h"
+
+#include <stdio.h>   // for snprintf
+#include <string.h>  // for strlen
+#include <math.h>    // for fabs
+#include "imu.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -44,12 +53,17 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+I2C_HandleTypeDef hi2c2;
+
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim5;
 TIM_HandleTypeDef htim8;
 TIM_HandleTypeDef htim9;
+TIM_HandleTypeDef htim12;
+
+UART_HandleTypeDef huart3;
 
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -58,35 +72,34 @@ const osThreadAttr_t defaultTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
-/* Definitions for MotorTask */
-osThreadId_t MotorTaskHandle;
-const osThreadAttr_t MotorTask_attributes = {
-  .name = "MotorTask",
+/* Definitions for controlTask */
+osThreadId_t controlTaskHandle;
+const osThreadAttr_t controlTask_attributes = {
+  .name = "controlTask",
   .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityLow,
+  .priority = (osPriority_t) osPriorityAboveNormal,
 };
-/* Definitions for encoderTask */
-osThreadId_t encoderTaskHandle;
-const osThreadAttr_t encoderTask_attributes = {
-  .name = "encoderTask",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityLow,
-};
-/* Definitions for control_Task */
-osThreadId_t control_TaskHandle;
-const osThreadAttr_t control_Task_attributes = {
-  .name = "control_Task",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityLow,
-};
-/* Definitions for servo_Task */
-osThreadId_t servo_TaskHandle;
-const osThreadAttr_t servo_Task_attributes = {
-  .name = "servo_Task",
+/* Definitions for oledTask */
+osThreadId_t oledTaskHandle;
+const osThreadAttr_t oledTask_attributes = {
+  .name = "oledTask",
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
 /* USER CODE BEGIN PV */
+// Global servo object for use by defaultTask
+Servo global_steer;
+
+// Current high-level instruction being executed (e.g., 'S','L','R','s','r').
+// 0 means none; shown as '-' on OLED.
+volatile char g_current_instr = 0;
+
+// Latched when the user presses the start button to begin the run sequence.
+volatile uint8_t g_user_start_requested = 0;
+
+// Flag while the IMU is undergoing calibration so the UI can show status.
+volatile uint8_t g_is_calibrating = 0;
+
 
 /* USER CODE END PV */
 
@@ -99,11 +112,12 @@ static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_TIM5_Init(void);
 static void MX_TIM8_Init(void);
+static void MX_I2C2_Init(void);
+static void MX_USART3_UART_Init(void);
+static void MX_TIM12_Init(void);
 void StartDefaultTask(void *argument);
-void motor(void *argument);
-void encoder_task(void *argument);
-void controlTask(void *argument);
-void servoTask(void *argument);
+void control_task(void *argument);
+void oled_task(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -111,6 +125,22 @@ void servoTask(void *argument);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+// UART3 RX byte buffer (interrupt-driven)
+static uint8_t uart3_rx_byte = 0;
+
+// Map instruction characters to descriptive OLED strings.
+static const char *instruction_to_text(char instr)
+{
+  switch (instr) {
+    case 'S': return "Forward";
+    case 's': return "Reverse";
+    case 'L': return "Left turn";
+    case 'R': return "Right turn";
+    case 'l': return "Reverse Left";
+    case 'r': return "Reverse Right";
+    default:  return "Unknown";
+  }
+}
 
 /* USER CODE END 0 */
 
@@ -149,11 +179,25 @@ int main(void)
   MX_TIM3_Init();
   MX_TIM5_Init();
   MX_TIM8_Init();
+  MX_I2C2_Init();
+  MX_USART3_UART_Init();
+  MX_TIM12_Init();
   /* USER CODE BEGIN 2 */
-  OLED_Init();
-  motor_init();
-  // Start 100 Hz control loop
-  control_init();
+OLED_Init();
+motor_init();          // Initialize motors (PWM + encoders)
+control_init();        // Start 100 Hz control loop tick (TIM5 or similar)
+
+// Initialize IMU (detects 0x68/0x69, sets 2000 dps; calibration happens later)
+uint8_t icm_addrSel = 0;
+imu_init(&hi2c2, &icm_addrSel);
+
+// Arm UART3 RX interrupt and send hello to RPi
+HAL_UART_Receive_IT(&huart3, &uart3_rx_byte, 1);   // arm RX
+const char *hello = "USART3 ready with interrupts\r\n";
+HAL_UART_Transmit(&huart3, (uint8_t*)hello, strlen(hello), 100);
+
+// (Optional) show which address was used on OLED/UART
+
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -179,17 +223,11 @@ int main(void)
   /* creation of defaultTask */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
-  /* creation of MotorTask */
-  MotorTaskHandle = osThreadNew(motor, NULL, &MotorTask_attributes);
+  /* creation of controlTask */
+  controlTaskHandle = osThreadNew(control_task, NULL, &controlTask_attributes);
 
-  /* creation of encoderTask */
-  encoderTaskHandle = osThreadNew(encoder_task, NULL, &encoderTask_attributes);
-
-  /* creation of control_Task */
-  control_TaskHandle = osThreadNew(controlTask, NULL, &control_Task_attributes);
-
-  /* creation of servo_Task */
-  servo_TaskHandle = osThreadNew(servoTask, NULL, &servo_Task_attributes);
+  /* creation of oledTask */
+  oledTaskHandle = osThreadNew(oled_task, NULL, &oledTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -256,6 +294,40 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief I2C2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C2_Init(void)
+{
+
+  /* USER CODE BEGIN I2C2_Init 0 */
+
+  /* USER CODE END I2C2_Init 0 */
+
+  /* USER CODE BEGIN I2C2_Init 1 */
+
+  /* USER CODE END I2C2_Init 1 */
+  hi2c2.Instance = I2C2;
+  hi2c2.Init.ClockSpeed = 100000;
+  hi2c2.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c2.Init.OwnAddress1 = 0;
+  hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c2.Init.OwnAddress2 = 0;
+  hi2c2.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c2.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C2_Init 2 */
+
+  /* USER CODE END I2C2_Init 2 */
+
 }
 
 /**
@@ -485,9 +557,9 @@ static void MX_TIM8_Init(void)
 
   /* USER CODE END TIM8_Init 1 */
   htim8.Instance = TIM8;
-  htim8.Init.Prescaler = 319;
+  htim8.Init.Prescaler = 15;
   htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim8.Init.Period = 999;
+  htim8.Init.Period = 19999;
   htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim8.Init.RepetitionCounter = 0;
   htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
@@ -596,6 +668,90 @@ static void MX_TIM9_Init(void)
 }
 
 /**
+  * @brief TIM12 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM12_Init(void)
+{
+
+  /* USER CODE BEGIN TIM12_Init 0 */
+
+  /* USER CODE END TIM12_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_IC_InitTypeDef sConfigIC = {0};
+
+  /* USER CODE BEGIN TIM12_Init 1 */
+
+  /* USER CODE END TIM12_Init 1 */
+  htim12.Instance = TIM12;
+  htim12.Init.Prescaler = 15;
+  htim12.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim12.Init.Period = 65535;
+  htim12.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim12.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim12) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim12, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_IC_Init(&htim12) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_BOTHEDGE;
+  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
+  sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
+  sConfigIC.ICFilter = 0;
+  if (HAL_TIM_IC_ConfigChannel(&htim12, &sConfigIC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM12_Init 2 */
+
+  /* USER CODE END TIM12_Init 2 */
+
+}
+
+/**
+  * @brief USART3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART3_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART3_Init 0 */
+
+  /* USER CODE END USART3_Init 0 */
+
+  /* USER CODE BEGIN USART3_Init 1 */
+
+  /* USER CODE END USART3_Init 1 */
+  huart3.Instance = USART3;
+  huart3.Init.BaudRate = 115200;
+  huart3.Init.WordLength = UART_WORDLENGTH_8B;
+  huart3.Init.StopBits = UART_STOPBITS_1;
+  huart3.Init.Parity = UART_PARITY_NONE;
+  huart3.Init.Mode = UART_MODE_TX_RX;
+  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART3_Init 2 */
+
+  /* USER CODE END USART3_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -609,10 +765,10 @@ static void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, GPIO_PIN_RESET);
@@ -646,6 +802,16 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+/* USER CODE BEGIN PV */
+// UI helpers for progress display
+static volatile uint8_t  g_move_active = 0;
+extern volatile int32_t g_move_target_left_ticks; // set this when you start a straight move
+
+// Encoder conversion for your setup (6.6 cm wheel, 330 PPR, x2 edges = 660 counts/rev)
+static const float WHEEL_CIRC_CM   = 3.1415926f * 6.6f;         // ≈ 20.735 cm
+static const float COUNTS_PER_REV  = 1560.0f;                    // calibration
+static const float TICKS_PER_CM    = COUNTS_PER_REV / WHEEL_CIRC_CM;
+/* USER CODE END PV */
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -658,189 +824,196 @@ static void MX_GPIO_Init(void)
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
-  /* Infinite loop */
-  for(;;)
+  // Initialize servo on TIM8 CH1. Compute tick_us from current timer clock and prescaler.
   {
-    osDelay(1);
+    uint32_t pclk2 = HAL_RCC_GetPCLK2Freq();
+    uint32_t timclk = pclk2; // APB2 prescaler = 1
+    float tick_us = ((float)(htim8.Init.Prescaler + 1U)) * (1000000.0f / (float)timclk);
+    // Example with HSI=16MHz, APB2=16MHz, PSC=319 => tick_us ~ 20.0, ARR=999 => 50 Hz PWM
+
+    // L/R Turn radius at 100% ~ 25-30cm
+    Servo_Attach(&global_steer, &htim8, TIM_CHANNEL_1, tick_us, 1050, 1500, 2600);
   }
+
+  if (Servo_Start(&global_steer) != HAL_OK) {
+    for(;;) { osDelay(1000); }
+  }
+  Servo_Center(&global_steer);
+
+  // Wait on the user button before starting the run so the robot sits idle on
+  // the start screen with live telemetry. Detect a rising edge to avoid
+  // re-triggering if the operator keeps the button pressed.
+  uint8_t prev_pressed = user_is_pressed();
+  while (!g_user_start_requested) {
+    uint8_t pressed = user_is_pressed();
+    if (!prev_pressed && pressed) {
+      g_user_start_requested = 1;
+    }
+    prev_pressed = pressed;
+    osDelay(10);
+  }
+
+  // Give the operator a short buffer, then calibrate the gyro while the robot
+  // is guaranteed to be stationary.
+  g_is_calibrating = 1;
+  osDelay(1000);
+  control_set_target_ticks_per_dt(0, 0);
+  motor_stop();
+  imu_calibrate_bias_blocking();
+  imu_zero_yaw();
+  g_is_calibrating = 0;
+
+  // Execute instruction list once: [[S,20],[L,0],[s,10]]
+  // Define instructions
+  typedef struct { char dir; float dist_cm; } instr_t;
+  /////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  const instr_t program[] = {{'S',200.0f},{'l', 0.0f},{'R',0.0f}, {'S',125.0f}};
+  /////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  const int program_len = sizeof(program)/sizeof(program[0]);
+
+  for (int i = 0; i < program_len; ++i) {
+    char d = program[i].dir;
+    float cm = program[i].dist_cm;
+
+    // expose current instruction to OLED task
+    g_current_instr = d;
+
+    if (d == 'S') {
+      move_start_straight(cm);
+    } else if (d == 's') {
+      move_start_straight(-cm);
+    } else if (d == 'L' || d == 'R' || d == 'l' || d == 'r') {
+      move_start_turn(d);
+    } else {
+      // Unknown directive: brake and stop, then break
+      control_set_target_ticks_per_dt(0, 0);
+      motor_brake_ms(80);
+      motor_stop();
+      g_current_instr = 0;
+      break;
+    }
+
+    // Wait until current movement completes
+    while (move_is_active()) {
+      osDelay(5);
+    }
+
+  // Immediately continue to next instruction
+    g_current_instr = 0; // clear between instructions
+  }
+
+  // Program complete: no instructions left — brake and stop
+  control_set_target_ticks_per_dt(0, 0);
+  motor_brake_ms(80);
+  motor_stop();
+  g_current_instr = 0;
+  for(;;) { osDelay(1000); }
   /* USER CODE END 5 */
 }
 
-/* USER CODE BEGIN Header_motor */
+/* USER CODE BEGIN Header_control_task */
 /**
-* @brief Function implementing the MotorTask thread.
+* @brief Function implementing the controlTask thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_motor */
-void motor(void *argument)
+/* USER CODE END Header_control_task */
+void control_task(void *argument)
 {
-  /* USER CODE BEGIN motor */
-	uint8_t run_sequence = 0;
-
-	  for(;;)
-	  {
-	    if (user_is_pressed()) {
-	        run_sequence = 1;
-	    }
-
-	    if (run_sequence) {
-	        // Ramp up forward
-	        for (int8_t speed = 0; speed <= 100; speed += 5) {
-	            motor_set_speeds(speed, speed);
-	            osDelay(200);
-	        }
-	        // Ramp down forward
-	        for (int8_t speed = 100; speed >= 0; speed -= 5) {
-	            motor_set_speeds(speed, speed);
-	            osDelay(200);
-	        }
-
-	        osDelay(500); // Pause
-
-	        // Ramp up reverse
-	        for (int8_t speed = 0; speed >= -100; speed -= 5) {
-	            motor_set_speeds(speed, speed);
-	            osDelay(200);
-	        }
-	        // Ramp down reverse
-	        for (int8_t speed = -100; speed <= 0; speed += 5) {
-	            motor_set_speeds(speed, speed);
-	            osDelay(200);
-	        }
-
-	        motor_stop();
-	        run_sequence = 0; // Sequence finished, wait for next button press
-	    }
-	    osDelay(20);
-	  }
-  /* USER CODE END motor */
-}
-
-/* USER CODE BEGIN Header_encoder_task */
-/**
-* @brief Function implementing the encoderTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_encoder_task */
-void encoder_task(void *argument)
-{
-  /* USER CODE BEGIN encoder_task */
-  char buffer[32];
-  for(;;)
-  {
-    int32_t tL=0,tR=0,mL=0,mR=0;
-    control_get_target_and_measured(&tL, &tR, &mL, &mR);
-    int8_t oL=0,oR=0;
-    control_get_outputs(&oL, &oR);
-
-    OLED_Clear();
-
-    // Show left: Target/Measured
-    sprintf(buffer, "L T/M:%ld/%ld", tL, mL);
-    OLED_ShowString(0, 0, (uint8_t*)buffer);
-
-    // Show right: Target/Measured
-    sprintf(buffer, "R T/M:%ld/%ld", tR, mR);
-    OLED_ShowString(0, 16, (uint8_t*)buffer);
-
-    // Show PWM outputs (percent)
-    sprintf(buffer, "L PWM:%d", (int)oL);
-    OLED_ShowString(0, 32, (uint8_t*)buffer);
-    sprintf(buffer, "R PWM:%d", (int)oR);
-    OLED_ShowString(0, 48, (uint8_t*)buffer);
-
-    OLED_Refresh_Gram();
-    osDelay(100);
-  }
-  /* USER CODE END encoder_task */
-}
-
-/* USER CODE BEGIN Header_controlTask */
-/**
-* @brief Function implementing the control_Task thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_controlTask */
-void controlTask(void *argument)
-{
-  /* USER CODE BEGIN controlTask */
-  // Button-driven step sequence for tuning.
-  // Sequence in ticks/10ms: 0 -> 10 -> 20 -> 0 -> -10 -> -20 -> 0 -> ...
-  const int32_t seq[] = {0, 10, 20, 0, -10, -20};
-  const uint32_t seq_len = sizeof(seq)/sizeof(seq[0]);
-  uint32_t idx = 0;
-
-  // Apply initial target
-  control_set_target_ticks_per_dt(seq[idx], seq[idx]);
-
-  uint8_t pressed_prev = user_is_pressed();
-
-  for(;;)
-  {
-    uint8_t pressed = user_is_pressed();
-    // On rising edge (not pressed -> pressed), advance step
-    if (!pressed_prev && pressed) {
-        idx = (idx + 1) % seq_len;
-        control_set_target_ticks_per_dt(seq[idx], seq[idx]);
-    }
-    pressed_prev = pressed;
-    osDelay(50);
-  }
-  /* USER CODE END controlTask */
-}
-
-/* USER CODE BEGIN Header_servoTask */
-/**
-* @brief Function implementing the servo_Task thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_servoTask */
-void servoTask(void *argument)
-{
-  /* USER CODE BEGIN servoTask */
-  // Configure TIM8 CH1 for standard hobby servo testing
-  // MX_TIM8_Init configures Prescaler=319, Period=999 → 50 Hz PWM with 20 µs tick
-  // So tick_us = 20.0f; limits: 1000 µs (left), 1500 µs (center), 2000 µs (right)
-  Servo steer;
-  Servo_Attach(&steer, &htim8, TIM_CHANNEL_1, 20.0f, 1000, 1500, 2100);
-  if (Servo_Start(&steer) != HAL_OK) {
-    // If PWM start fails, halt this task
-    for(;;) { osDelay(1000); }
-  }
-
-  // Initial center
-  Servo_Center(&steer);
-  osDelay(1000);
-
-  /* Infinite test loop */
+  /* USER CODE BEGIN control_task */
+  // Run the 100 Hz speed control loop when due
   for(;;) {
-    // Step test using pulse widths
-//    Servo_WriteUS(&steer, 1000); // left
-//    osDelay(1000);
-//    Servo_WriteUS(&steer, 1500); // center
-//    osDelay(1000);
-//    Servo_WriteUS(&steer, 2100); // right
-//    osDelay(1000);
-
-    // Sweep using angle mapping (-100..+100)
-//    for (int ang = -100; ang <= 100; ang += 10) {
-//      Servo_WriteAngle(&steer, (float)ang);
-//      osDelay(150);
-//    }
-//    for (int ang = 100; ang >= -100; ang -= 10) {
-//      Servo_WriteAngle(&steer, (float)ang);
-//      osDelay(150);
-//    }
-
-    // Back to center, brief pause
-    Servo_Center(&steer);
-    osDelay(1000);
+    if (control_is_due()) {
+      control_step();
+      // Tick movement planner at the same 100 Hz cadence
+      move_tick_100Hz();
+      control_clear_due();
+    }
+    osDelay(1);
   }
-  /* USER CODE END servoTask */
+  /* USER CODE END control_task */
+}
+
+/* USER CODE BEGIN Header_oled_task */
+/**
+* @brief Function implementing the oledTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_oled_task */
+void oled_task(void *argument)
+{
+  /* USER CODE BEGIN oled_task */
+// Update OLED at ~5 Hz; initialize static layout once, then update dynamic values only
+  uint32_t last_tick = HAL_GetTick();
+
+  // Static layout (draw once)
+  OLED_Clear();
+  OLED_ShowString(0, 16, (uint8_t*)"Yaw: ");
+  OLED_ShowString(88, 16, (uint8_t*)" deg");
+  OLED_ShowString(0, 32, (uint8_t*)"T:");
+  OLED_ShowChar(48, 32, ',', 12, 1);
+  OLED_ShowString(0, 48, (uint8_t*)"M:");
+  OLED_ShowChar(48, 48, ',', 12, 1);
+  OLED_Refresh_Gram();
+
+  for(;;)
+  {
+    uint32_t now = HAL_GetTick();
+    if (now - last_tick >= 200) {
+      last_tick = now;
+
+      float yawf = imu_get_yaw();
+      int32_t tL=0,tR=0,mL=0,mR=0;
+      control_get_target_and_measured(&tL, &tR, &mL, &mR);
+
+      // Status line: prompt, calibration state, or descriptive instruction text
+      const char *status_text = NULL;
+      if (!g_user_start_requested) {
+        status_text = "Press to start";
+      } else if (g_is_calibrating) {
+        status_text = "Calibrating";
+      } else if (g_current_instr) {
+        status_text = instruction_to_text(g_current_instr);
+      } else {
+        status_text = "Complete";
+      }
+
+      OLED_ShowString(0, 0, (uint8_t*)"                ");
+      OLED_ShowString(0, 0, (uint8_t*)status_text);
+
+      // Lightweight rounding to avoid libm dependency
+      int yaw10 = (int)(yawf * 10.0f + (yawf >= 0.0f ? 0.5f : -0.5f));
+      int sign = (yaw10 < 0) ? -1 : 1;
+      if (yaw10 < 0) yaw10 = -yaw10;
+      int yaw_deg = yaw10 / 10;
+      int yaw_tenth = yaw10 % 10;
+
+      // Dynamic updates only (no full clear)
+      // Yaw
+      OLED_ShowChar(40, 16, (sign < 0) ? '-' : ' ', 12, 1);
+      OLED_ShowNumber(48, 16, (uint32_t)yaw_deg, 3, 12);
+      OLED_ShowChar(72, 16, '.', 12, 1);
+      OLED_ShowChar(80, 16, (char)('0' + yaw_tenth), 12, 1);
+
+  // Targets: clear small areas first to avoid ghosting, then draw (show absolute ticks)
+      OLED_ShowString(16, 32, (uint8_t*)"    ");
+      OLED_ShowString(56, 32, (uint8_t*)"    ");
+  OLED_ShowNumber(16, 32, (uint32_t)(tL < 0 ? -tL : tL), 4, 12);
+  OLED_ShowNumber(56, 32, (uint32_t)(tR < 0 ? -tR : tR), 4, 12);
+
+  // Measured: clear small areas first to avoid ghosting, then draw (show absolute ticks)
+      OLED_ShowString(16, 48, (uint8_t*)"    ");
+      OLED_ShowString(56, 48, (uint8_t*)"    ");
+  OLED_ShowNumber(16, 48, (uint32_t)(mL < 0 ? -mL : mL), 4, 12);
+  OLED_ShowNumber(56, 48, (uint32_t)(mR < 0 ? -mR : mR), 4, 12);
+
+      // Refresh
+      OLED_Refresh_Gram();
+    }
+    osDelay(5);
+  }
+  /* USER CODE END oled_task */
 }
 
 /**

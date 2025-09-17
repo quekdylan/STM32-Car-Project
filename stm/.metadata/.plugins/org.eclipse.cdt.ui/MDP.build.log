@@ -1,47 +1,10 @@
-10:21:26 **** Incremental Build of configuration Debug for project MDP ****
+17:57:51 **** Incremental Build of configuration Debug for project MDP ****
 make -j7 all 
-arm-none-eabi-gcc "../Core/Src/main.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F407xx -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I../Drivers/CMSIS/Include -I../Middlewares/Third_Party/FreeRTOS/Source/include -I../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2 -I../Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/main.d" -MT"Core/Src/main.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/main.o"
-../Core/Src/main.c: In function 'main':
-../Core/Src/main.c:154:3: warning: implicit declaration of function 'motor_init'; did you mean 'control_init'? [-Wimplicit-function-declaration]
-  154 |   motor_init();
-      |   ^~~~~~~~~~
-      |   control_init
-../Core/Src/main.c: In function 'motor':
-../Core/Src/main.c:690:21: warning: implicit declaration of function 'motor_set_speeds' [-Wimplicit-function-declaration]
-  690 |                     motor_set_speeds(speed, speed);
-      |                     ^~~~~~~~~~~~~~~~
-../Core/Src/main.c:712:17: warning: implicit declaration of function 'motor_stop' [-Wimplicit-function-declaration]
-  712 |                 motor_stop();
-      |                 ^~~~~~~~~~
-../Core/Src/main.c: In function 'encoder_task':
-../Core/Src/main.c:741:5: warning: implicit declaration of function 'sprintf' [-Wimplicit-function-declaration]
-  741 |     sprintf(buffer, "L T/M:%ld/%ld", tL, mL);
-      |     ^~~~~~~
-../Core/Src/main.c:29:1: note: include '<stdio.h>' or provide a declaration of 'sprintf'
-   28 | #include "servo.h"
-  +++ |+#include <stdio.h>
-   29 | /* USER CODE END Includes */
-../Core/Src/main.c:741:5: warning: incompatible implicit declaration of built-in function 'sprintf' [-Wbuiltin-declaration-mismatch]
-  741 |     sprintf(buffer, "L T/M:%ld/%ld", tL, mL);
-      |     ^~~~~~~
-../Core/Src/main.c:741:5: note: include '<stdio.h>' or provide a declaration of 'sprintf'
-arm-none-eabi-gcc -o "MDP.elf" @"objects.list"   -mcpu=cortex-m4 -T"/Users/dylan/Desktop/NTU/SC2079/SC2079-MDP-Group-19/stm/MDP/STM32F407VETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="MDP.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
-Finished building target: MDP.elf
- 
 arm-none-eabi-size  MDP.elf 
-arm-none-eabi-objdump -h -S MDP.elf  > "MDP.list"
-arm-none-eabi-objcopy  -O ihex MDP.elf  "MDP.hex"
-arm-none-eabi-objcopy  -O binary MDP.elf  "MDP.bin"
    text	   data	    bss	    dec	    hex	filename
-  34584	    100	  22324	  57008	   deb0	MDP.elf
+  68596	    496	  22680	  91772	  1667c	MDP.elf
 Finished building: default.size.stdout
  
-Finished building: MDP.bin
-Finished building: MDP.hex
- 
- 
-Finished building: MDP.list
- 
 
-10:21:27 Build Finished. 0 errors, 5 warnings. (took 929ms)
+17:57:51 Build Finished. 0 errors, 0 warnings. (took 190ms)
 

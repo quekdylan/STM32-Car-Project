@@ -1,6 +1,7 @@
-../Core/Src/motor.c:13:6:motor_init	8	static
-../Core/Src/motor.c:25:6:motor_set_speeds	40	static
-../Core/Src/motor.c:69:6:motor_stop	4	static
-../Core/Src/motor.c:76:9:motor_get_left_encoder_counts	4	static
-../Core/Src/motor.c:81:9:motor_get_right_encoder_counts	4	static
-../Core/Src/motor.c:85:6:motor_reset_encoders	4	static
+../Core/Src/motor.c:15:6:motor_init	8	static
+../Core/Src/motor.c:27:6:motor_set_speeds	40	static
+../Core/Src/motor.c:81:6:motor_stop	4	static
+../Core/Src/motor.c:88:6:motor_brake_ms	24	static
+../Core/Src/motor.c:109:9:motor_get_left_encoder_counts	4	static
+../Core/Src/motor.c:114:9:motor_get_right_encoder_counts	4	static
+../Core/Src/motor.c:118:6:motor_reset_encoders	4	static

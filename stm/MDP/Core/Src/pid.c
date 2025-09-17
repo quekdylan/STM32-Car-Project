@@ -73,3 +73,56 @@ void PID_clear(pid_type_def *pid)
     pid->fdb = pid->set = 0.0f;
 }
 
+void PID_SPEED_1(pid_type_def *pid, float angleNow, float *correction, int8_t dir,
+    uint16_t *newDutyL, uint16_t *newDutyR)
+{
+// “Turn/trim” mode: target angle = 0 (straight), lower base, more authority
+float error = 0.0f - angleNow;
+*correction = pid->Kp * error;
+
+// Lower base (~37% of 799 ≈ 300)
+*newDutyL = 490 + (int16_t)(*correction * dir);
+*newDutyR = 490 - (int16_t)(*correction * dir);
+
+// Clamp to valid PWM range [0..799]
+if (*newDutyL > 799) *newDutyL = 799;
+if ((int)*newDutyL < 0) *newDutyL = 0;
+if (*newDutyR > 799) *newDutyR = 799;
+if ((int)*newDutyR < 0) *newDutyR = 0;
+}
+
+void PID_SPEED_2(pid_type_def *pid, float angleNow, float *correction, int8_t dir,
+    uint16_t *newDutyL, uint16_t *newDutyR) 
+{
+// Fast mode: target angle = 0 (straight)
+float error = 0.0f - angleNow;
+*correction = pid->Kp * error;
+
+// Apply correction around higher base duty (~65% of 799 ≈ 520)
+*newDutyL = 520 + (int16_t)(*correction * dir);
+*newDutyR = 520 - (int16_t)(*correction * dir);
+
+// Clamp values to valid PWM range
+if (*newDutyL > 799) *newDutyL = 799;
+if (*newDutyL < 0)   *newDutyL = 0;
+if (*newDutyR > 799) *newDutyR = 799;
+if (*newDutyR < 0)   *newDutyR = 0;
+}
+
+void PID_SPEED_T(pid_type_def *pid, float angleNow, float *correction, int8_t dir,
+    uint16_t *newDutyL, uint16_t *newDutyR)
+{
+// “Turn/trim” mode: target angle = 0 (straight), lower base, more authority
+float error = 0.0f - angleNow;
+*correction = pid->Kp * error;
+
+// Lower base (~37% of 799 ≈ 300)
+*newDutyL = 300 + (int16_t)(*correction * dir);
+*newDutyR = 300 - (int16_t)(*correction * dir);
+
+// Clamp to valid PWM range [0..799]
+if (*newDutyL > 799) *newDutyL = 799;
+if ((int)*newDutyL < 0) *newDutyL = 0;
+if (*newDutyR > 799) *newDutyR = 799;
+if ((int)*newDutyR < 0) *newDutyR = 0;
+}

@@ -1,3 +1,6 @@
 ../Core/Src/pid.c:12:6:PID_init_with_dt	32	static
 ../Core/Src/pid.c:36:6:PID_calc_with_dt	24	static
 ../Core/Src/pid.c:67:6:PID_clear	16	static
+../Core/Src/pid.c:76:6:PID_SPEED_1	40	static
+../Core/Src/pid.c:94:6:PID_SPEED_2	40	static
+../Core/Src/pid.c:112:6:PID_SPEED_T	40	static
