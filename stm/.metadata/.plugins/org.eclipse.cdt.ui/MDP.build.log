@@ -1,10 +1,10 @@
-01:58:50 **** Incremental Build of configuration Debug for project MDP ****
+17:57:51 **** Incremental Build of configuration Debug for project MDP ****
 make -j7 all 
 arm-none-eabi-size  MDP.elf 
    text	   data	    bss	    dec	    hex	filename
-  67116	    492	  22596	  90204	  1605c	MDP.elf
+  68596	    496	  22680	  91772	  1667c	MDP.elf
 Finished building: default.size.stdout
  
 
-01:58:50 Build Finished. 0 errors, 0 warnings. (took 214ms)
+17:57:51 Build Finished. 0 errors, 0 warnings. (took 190ms)
 

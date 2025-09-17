@@ -1,8 +1,10 @@
 ../Core/Inc/servo.h:46:20:Servo_Center	16	static
-../Core/Src/movements.c:88:9:move_is_active	4	static
-../Core/Src/movements.c:92:6:move_abort	8	static
-../Core/Src/movements.c:100:6:move_start_straight	32	static
-../Core/Src/movements.c:140:6:move_start_turn	24	static
-../Core/Src/movements.c:180:6:move_tick_100Hz	136	static
-../Core/Src/movements.c:314:6:move_set_profile_distances_cm	16	static
-../Core/Src/movements.c:322:6:move_get_profile_distances_cm	16	static
+../Core/Src/movements.c:92:9:move_is_active	4	static
+../Core/Src/movements.c:96:6:move_abort	8	static
+../Core/Src/movements.c:104:6:move_start_straight	32	static
+../Core/Src/movements.c:144:6:move_start_turn	24	static
+../Core/Src/movements.c:186:6:move_tick_100Hz	152	static
+../Core/Src/movements.c:349:6:move_set_profile_distances_cm	16	static
+../Core/Src/movements.c:357:6:move_get_profile_distances_cm	16	static
+../Core/Src/movements.c:363:6:move_set_turn_spinup_ticks	16	static
+../Core/Src/movements.c:368:10:move_get_turn_spinup_ticks	4	static

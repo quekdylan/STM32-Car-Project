@@ -101,6 +101,10 @@ void ICM20948_readAccelerometer_allAxises(I2C_HandleTypeDef *hi2c, uint8_t selec
  */
 void ICM20948_readTemperature(I2C_HandleTypeDef *hi2c, uint8_t selectI2cAddress, int16_t *reading);
 
+// Magnetometer (AK09916) simple access (raw, no scaling). Returns 0 on success, non-zero on failure.
+int ICM20948_mag_enable(I2C_HandleTypeDef *hi2c, uint8_t selectI2cAddress);
+int ICM20948_mag_read_raw(I2C_HandleTypeDef *hi2c, uint8_t selectI2cAddress, int16_t *mx, int16_t *my, int16_t *mz);
+
 #ifdef __cplusplus
 }
 #endif

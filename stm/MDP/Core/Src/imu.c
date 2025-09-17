@@ -47,8 +47,8 @@ static inline float wrap180(float a){
 // Bias calibration @ 2000 dps
 // -----------------------
 static void imu_calibrate_bias_(void){
-    // ~1 second of samples at ~500 * 2ms = ~1000ms
-    const int N = 500;
+    // ~2 second of samples at ~1000 * 2ms = ~2000ms
+    const int N = 1000;
     float sum_dps = 0.0f;
 
     for (int i = 0; i < N; i++){
@@ -83,10 +83,9 @@ void imu_init(I2C_HandleTypeDef *hi2c, uint8_t *out_addrSel){
     // Configure IMU with 2000 dps full-scale
     ICM20948_init(hi2c, s_addrSel, GYRO_FULL_SCALE_2000DPS);
 
-    // Keep the robot still for ~1s during bias calibration
-    imu_calibrate_bias_();
-
-    // Start from zero heading
+    // Delay bias calibration until the user explicitly requests it so the
+    // robot can sit idle on the start screen. Default to zero bias for now.
+    s_gyro_bias_z = 0.0f;
     s_yaw_deg = 0.0f;
 
     // Enable magnetometer (non-fatal if fails)
@@ -96,6 +95,17 @@ void imu_init(I2C_HandleTypeDef *hi2c, uint8_t *out_addrSel){
     } else {
         s_mag_ready = 0;
     }
+}
+
+void imu_calibrate_bias_blocking(void){
+    if (!s_imu_i2c) {
+        return;
+    }
+
+    imu_calibrate_bias_();
+    // After calibration we know the current orientation should be treated as
+    // the zero reference for subsequent motion planning.
+    s_yaw_deg = 0.0f;
 }
 
 float imu_get_yaw(void){

@@ -22,3 +22,7 @@ void move_tick_100Hz(void);
 // Configure fixed accel/decel distances (in centimeters)
 void move_set_profile_distances_cm(float accel_cm, float decel_cm);
 void move_get_profile_distances_cm(float *accel_cm, float *decel_cm);
+
+// Configure the duration (in 100 Hz ticks) that turns stay at TURN_MIN_TICKS_PER_DT
+void move_set_turn_spinup_ticks(uint16_t ticks_100Hz);
+uint16_t move_get_turn_spinup_ticks(void);
