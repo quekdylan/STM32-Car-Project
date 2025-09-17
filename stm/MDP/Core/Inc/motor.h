@@ -2,6 +2,7 @@
 #define MOTOR_H
 
 #include "main.h"
+#include <stdint.h>
 
 /**
  * @brief Initializes the PWM and Encoder peripherals.
@@ -21,6 +22,13 @@ void motor_set_speeds(int8_t left_speed_percent, int8_t right_speed_percent);
  * @brief Stops both motors by setting PWM to zero (coast).
  */
 void motor_stop(void);
+
+/**
+ * @brief Applies a brief active short-brake on both motors, then coasts.
+ * Sets both H-bridge inputs HIGH to short the motor terminals for ms milliseconds,
+ * then releases to zero PWM. Use small ms (e.g., 50–150 ms).
+ */
+void motor_brake_ms(uint16_t ms);
 
 /**
  * @brief Gets the raw encoder tick count for the left motor.

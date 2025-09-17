@@ -1,0 +1,237 @@
+// movements.c
+#include "movements.h"
+#include "motor.h"
+#include "imu.h"
+#include "pid.h"
+#include <math.h>
+
+// ===== Your existing helpers we reuse =====
+extern void PID_SPEED_1(pid_type_def *pid, float angleNow, float *correction,
+                        int8_t dir, uint16_t *newDutyL, uint16_t *newDutyR);
+extern void PID_SPEED_2(pid_type_def *pid, float angleNow, float *correction,
+                        int8_t dir, uint16_t *newDutyL, uint16_t *newDutyR);
+
+// --- Config you said: 6.6 cm wheels, 330 PPR quadrature x2 (rising/rising) = 660 counts/rev ---
+static const float WHEEL_CIRC_CM  = 3.1415926f * 6.6f;         // ~20.735 cm
+static const float COUNTS_PER_REV = 1560.0f;                   // calibration
+static const float TICKS_PER_CM   = COUNTS_PER_REV / WHEEL_CIRC_CM; // ~31.8
+
+// --- Motion state ---
+typedef struct {
+  uint8_t   active;
+  int8_t    dir;                 // +1 forward, -1 backward
+  speed_mode_t mode;             // SPEED_MODE_1 or _2
+  int32_t   target_ticks;        // distance goal in encoder ticks (left-based)
+  int32_t   start_left;
+  float     angle_deg;           // integrated yaw (deg)
+  // old-PID-style things:
+  pid_type_def pidSlow, pidFast;
+  uint8_t   pid_inited;
+  // ramp profile (time-based accel/decel shaping)
+  int32_t   total_ticks_abs;     // absolute target distance in ticks
+  int16_t   vmax_percent;        // peak base speed magnitude in [%]
+  // timing expressed in control steps (10 ms)
+  int32_t   n_accel_steps;
+  int32_t   n_decel_steps;
+  // phase tracking
+  uint8_t   phase;               // 0=ACCEL, 1=CRUISE, 2=DECEL
+  int32_t   accel_step_idx;
+  int32_t   decel_step_idx;
+  float     vmag_at_decel_start; // percent at decel begin
+  // speed measurement helper
+  int32_t   last_left_for_speed;
+} move_state_t;
+
+static move_state_t ms = {0};
+
+// ---- Ramping configuration (defaults) ----
+static move_ramp_config_t g_move_cfg = {
+  .vmax_percent_mode1 = 20.0f,
+  .vmax_percent_mode2 = 50.0f,
+  .accel_time_s       = 0.5f,
+  .decel_time_s       = 1,5f,
+  .vmin_percent       = 0.5f,
+};
+
+static float clampf(float v, float lo, float hi) { if (v < lo) return lo; if (v > hi) return hi; return v; }
+
+void move_set_ramp_config(const move_ramp_config_t *cfg)
+{
+  if (!cfg) return;
+  // copy with light validation/clamping
+  g_move_cfg.vmax_percent_mode1 = clampf(cfg->vmax_percent_mode1, 0.0f, 100.0f);
+  g_move_cfg.vmax_percent_mode2 = clampf(cfg->vmax_percent_mode2, 0.0f, 100.0f);
+  g_move_cfg.accel_time_s       = clampf(cfg->accel_time_s, 0.0f, 5.0f);
+  g_move_cfg.decel_time_s       = clampf(cfg->decel_time_s, 0.0f, 5.0f);
+  g_move_cfg.vmin_percent       = clampf(cfg->vmin_percent, 0.0f, 20.0f);
+}
+
+void move_get_ramp_config(move_ramp_config_t *out)
+{
+  if (!out) return;
+  *out = g_move_cfg;
+}
+
+// utility: clamp a value
+static inline uint16_t clamp_u16(uint16_t v, uint16_t lo, uint16_t hi) {
+  if (v < lo) return lo;
+  if (v > hi) return hi;
+  return v;
+}
+
+void move_start_straight(float distance_cm, speed_mode_t mode)
+{
+  ms.active = 1;
+  ms.mode   = mode;
+  ms.dir    = (distance_cm >= 0.0f) ? 1 : -1;
+  ms.angle_deg = 0.0f;
+
+  // distance target (use left encoder only, per your request)
+  motor_reset_encoders();
+  ms.start_left   = motor_get_left_encoder_counts();
+  ms.total_ticks_abs = (int32_t)lroundf(fabsf(distance_cm) * TICKS_PER_CM);
+  if (ms.total_ticks_abs < 1) ms.total_ticks_abs = 1; // ensure progress
+  ms.target_ticks = (int32_t)( (float)ms.dir * (float)ms.total_ticks_abs );
+
+  // Choose peak speed by mode (tunable)
+  ms.vmax_percent = (mode == SPEED_MODE_2) ? (int16_t)lroundf(g_move_cfg.vmax_percent_mode2)
+                                           : (int16_t)lroundf(g_move_cfg.vmax_percent_mode1);  // [%]
+
+  // Convert time-based ramps to step counts (10ms per step at 100 Hz)
+  const float dt_s = 0.01f;
+  ms.n_accel_steps = (int32_t)lroundf(g_move_cfg.accel_time_s / dt_s);
+  ms.n_decel_steps = (int32_t)lroundf(g_move_cfg.decel_time_s / dt_s);
+  if (ms.n_accel_steps < 0) ms.n_accel_steps = 0;
+  if (ms.n_decel_steps < 0) ms.n_decel_steps = 0;
+
+  // Initialize phase
+  ms.phase = 0; // ACCEL
+  ms.accel_step_idx = 0;
+  ms.decel_step_idx = 0;
+  ms.vmag_at_decel_start = (float)ms.vmax_percent; // overwritten if decel starts before max
+  ms.last_left_for_speed = ms.start_left;
+
+  // init old P-only “pid” containers once
+  if (!ms.pid_inited) {
+    float slow[3] = {2.5f, 0.0f, 0.0f}; // Kp, Ki, Kd (only Kp used)
+    float fast[3] = {1.5f, 0.0f, 0.0f}; // Kp
+    PID_init_with_dt(&ms.pidSlow, slow, 30.0f, 10.0f, 5.0f, 0.01f);
+    PID_init_with_dt(&ms.pidFast, fast, 30.0f, 10.0f, 5.0f, 0.01f);
+    ms.pid_inited = 1;
+  }
+}
+
+void move_abort(void)
+{
+  ms.active = 0;
+  motor_stop();
+}
+
+uint8_t move_is_active(void)
+{
+  return ms.active;
+}
+
+// Call this exactly every 10 ms (100 Hz)
+void move_tick_100Hz(void)
+{
+  if (!ms.active) return;
+
+  // 1) Update and get the robot's current heading from the IMU
+  imu_update_yaw_100Hz();
+  float current_yaw = imu_get_yaw();
+
+  // 2) Check distance using the left encoder
+  int32_t left_now = motor_get_left_encoder_counts();
+  int32_t left_delta = left_now - ms.start_left;
+
+  // Stop when the target distance is reached
+  if ((ms.dir > 0 && left_delta >= ms.target_ticks) ||
+      (ms.dir < 0 && left_delta <= ms.target_ticks))
+  {
+    motor_stop();
+    ms.active = 0;
+    return;
+  }
+
+  // 3) Calculate the steering correction using the PID controller
+  //    The target is to maintain a 0-degree heading.
+  float correction = PID_calc_with_dt(&ms.pidSlow, current_yaw, 0.0f);
+
+  // Base speed with time-based ramping; compute progress and measured speed
+  int32_t ticks_travelled_abs = left_delta * ms.dir; // signed to absolute based on dir
+  if (ticks_travelled_abs < 0) ticks_travelled_abs = 0;
+  if (ticks_travelled_abs > ms.total_ticks_abs) ticks_travelled_abs = ms.total_ticks_abs;
+
+  // Measured speed in ticks per 10ms
+  int32_t dl_ticks = left_now - ms.last_left_for_speed;
+  ms.last_left_for_speed = left_now;
+  int32_t speed_ticks_per_dt_abs = dl_ticks * ms.dir;
+  if (speed_ticks_per_dt_abs < 0) speed_ticks_per_dt_abs = -speed_ticks_per_dt_abs;
+
+  int32_t remaining_ticks = ms.total_ticks_abs - ticks_travelled_abs;
+
+  // Decide whether to enter decel based on remaining distance vs braking distance
+  // braking distance (ticks) for linear decel ~ v * N/2 (triangle area)
+  int32_t brake_dist_ticks = (ms.n_decel_steps > 0)
+                           ? (speed_ticks_per_dt_abs * ms.n_decel_steps) / 2
+                           : 0;
+  if (ms.phase != 2 && remaining_ticks <= brake_dist_ticks) {
+    // enter DECEL now
+    uint8_t prev_phase = ms.phase;
+    ms.phase = 2;
+    ms.decel_step_idx = 0;
+    // use current command magnitude as starting point if still accelerating
+    float v_from_accel = (ms.n_accel_steps > 0)
+                       ? ((float)ms.vmax_percent * (float)ms.accel_step_idx / (float)ms.n_accel_steps)
+                       : (float)ms.vmax_percent;
+    if (v_from_accel > (float)ms.vmax_percent) v_from_accel = (float)ms.vmax_percent;
+    ms.vmag_at_decel_start = (prev_phase == 0) ? v_from_accel : (float)ms.vmax_percent;
+  }
+
+  float vmag = (float)ms.vmax_percent; // default cruise
+  if (ms.phase == 0) {
+    // ACCEL
+    if (ms.n_accel_steps > 0) {
+      vmag = (float)ms.vmax_percent * ((float)ms.accel_step_idx / (float)ms.n_accel_steps);
+      if (vmag > (float)ms.vmax_percent) vmag = (float)ms.vmax_percent;
+    } else {
+      vmag = (float)ms.vmax_percent;
+    }
+    if (ms.accel_step_idx < ms.n_accel_steps) ms.accel_step_idx++;
+    if (ms.accel_step_idx >= ms.n_accel_steps) ms.phase = 1; // move to CRUISE (unless DECEL already)
+  } else if (ms.phase == 1) {
+    vmag = (float)ms.vmax_percent;
+  } else { // ms.phase == 2
+    // DECEL: from vmag_at_decel_start down to 0 over n_decel_steps
+    float start_v = ms.vmag_at_decel_start;
+    if (start_v > (float)ms.vmax_percent) start_v = (float)ms.vmax_percent;
+    if (ms.n_decel_steps > 0) {
+      float frac = (float)ms.decel_step_idx / (float)ms.n_decel_steps;
+      if (frac > 1.0f) frac = 1.0f;
+      vmag = start_v * (1.0f - frac);
+    } else {
+      vmag = 0.0f;
+    }
+    if (ms.decel_step_idx < ms.n_decel_steps) ms.decel_step_idx++;
+  }
+
+  // Ensure a tiny non-zero speed while we still have distance to go
+  // to avoid stalling before the target due to friction/rounding
+  if (ticks_travelled_abs < ms.total_ticks_abs && vmag < g_move_cfg.vmin_percent)
+    vmag = g_move_cfg.vmin_percent;
+
+  int16_t base_speed = (int16_t)lroundf(vmag) * ms.dir;
+
+  // Apply the correction to steer the robot
+  int16_t left_speed = base_speed - (int16_t)correction;
+  int16_t right_speed = base_speed + (int16_t)correction;
+
+  // Clamp the speed values to the valid range [-100, 100]
+  if (left_speed > 100) left_speed = 100;
+  if (left_speed < -100) left_speed = -100;
+  if (right_speed > 100) right_speed = 100;
+  if (right_speed < -100) right_speed = -100;
+
+  motor_set_speeds((int8_t)left_speed, (int8_t)right_speed);
+}

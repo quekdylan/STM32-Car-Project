@@ -60,8 +60,32 @@ void control_init(void)
 
 void control_set_target_ticks_per_dt(int32_t left_ticks, int32_t right_ticks)
 {
+    // If direction flips (sign change), clear integrators to avoid fighting previous windup
+    if ((left_ticks == 0 || target_left_ticks_dt == 0) ? 0 : ((left_ticks > 0) != (target_left_ticks_dt > 0))) {
+        PID_clear(&pid_left);
+    }
+    if ((right_ticks == 0 || target_right_ticks_dt == 0) ? 0 : ((right_ticks > 0) != (target_right_ticks_dt > 0))) {
+        PID_clear(&pid_right);
+    }
+
+    // If transitioning to zero target from non-zero, clear integrators to prevent residual drive
+    if (left_ticks == 0 && target_left_ticks_dt != 0) {
+        PID_clear(&pid_left);
+    }
+    if (right_ticks == 0 && target_right_ticks_dt != 0) {
+        PID_clear(&pid_right);
+    }
     target_left_ticks_dt = left_ticks;
     target_right_ticks_dt = right_ticks;
+}
+
+void control_sync_encoders(void)
+{
+    // When another module resets encoder counters, realign our baselines
+    // and skip one sample to avoid a large spurious delta fighting the PID.
+    last_left_counts = motor_get_left_encoder_counts();
+    last_right_counts = motor_get_right_encoder_counts();
+    first_sample = 1;
 }
 
 // Runs at 100 Hz from TIM5 ISR
@@ -87,13 +111,26 @@ void control_step(void)
     meas_left_ticks_dt = dl;
     meas_right_ticks_dt = dr;
 
+    // If targets are zero, unconditionally stop and clear integrators to avoid creep
+    if (target_left_ticks_dt == 0 && target_right_ticks_dt == 0) {
+        PID_clear(&pid_left);
+        PID_clear(&pid_right);
+        last_cmd_left = 0;
+        last_cmd_right = 0;
+        motor_stop();
+        return;
+    }
+
     // Compute PID outputs (PWM percent)
     float out_l = PID_calc_with_dt(&pid_left, (float)dl, (float)target_left_ticks_dt);
     float out_r = PID_calc_with_dt(&pid_right, (float)dr, (float)target_right_ticks_dt);
 
-    // Apply to motors (cast to int8_t safely within [-100, 100])
+    // Apply a small deadband so tiny outputs don't map to 54% PWM minimum
     int8_t cmd_l = (int8_t)(out_l);
     int8_t cmd_r = (int8_t)(out_r);
+    const int8_t pwm_deadband = 5; // percent
+    if (cmd_l < pwm_deadband && cmd_l > -pwm_deadband) cmd_l = 0;
+    if (cmd_r < pwm_deadband && cmd_r > -pwm_deadband) cmd_r = 0;
     last_cmd_left = cmd_l;
     last_cmd_right = cmd_r;
     motor_set_speeds(cmd_l, cmd_r);

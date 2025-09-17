@@ -31,6 +31,12 @@ void control_clear_due(void);
 // Run one control step (encoders -> PID -> PWM)
 void control_step(void);
 
+// Resync encoder baselines in the control loop after external counter resets.
+// This avoids a bogus large delta on the next control step (e.g., after
+// motor_reset_encoders()), and ensures the first post-reset control sample
+// is skipped.
+void control_sync_encoders(void);
+
 /*
 Tuning notes (what you need to set):
 - Gains: start with KP=2.0, KI=0.5, KD=0.01 for 100 Hz; then tune.

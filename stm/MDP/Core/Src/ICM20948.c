@@ -38,6 +38,7 @@
 // ============================================================================
 
 static uint8_t readGyroDataZ[2];
+static uint8_t mag_enabled = 0;
 
 // ============================================================================
 // PRIVATE FUNCTION PROTOTYPES
@@ -213,11 +214,13 @@ void ICM20948_init(I2C_HandleTypeDef *hi2c, uint8_t selectI2cAddress, uint8_t se
     status = _ICM20948_SelectUserBank(hi2c, selectI2cAddress, USER_BANK_2);
 
     // Configure gyroscope
+    // Note: selectGyroSensitivity constants are already pre-shifted to bits [2:1].
+    // Do NOT shift again here.
     status = _ICM20948_WriteByte(
         hi2c,
         selectI2cAddress,
         ICM20948__USER_BANK_2__GYRO_CONFIG_1__REGISTER,
-        3 << GYRO_DLPFCFG_BIT | selectGyroSensitivity << BIT_1 | EN_GRYO_DLPF << GYRO_FCHOICE_BIT);
+        (3 << GYRO_DLPFCFG_BIT) | (selectGyroSensitivity) | (EN_GRYO_DLPF << GYRO_FCHOICE_BIT));
 
     // Configure accelerometer (enable and set sensitivity)
     status = _ICM20948_WriteByte(
@@ -235,6 +238,13 @@ void ICM20948_init(I2C_HandleTypeDef *hi2c, uint8_t selectI2cAddress, uint8_t se
 
     // Return to User Bank 0
     status = _ICM20948_SelectUserBank(hi2c, selectI2cAddress, USER_BANK_0);
+
+    // Disable internal I2C master to allow direct bypass access to AK09916
+    status = _ICM20948_WriteByte(
+        hi2c,
+        selectI2cAddress,
+        ICM20948__USER_BANK_0__USER_CTRL__REGISTER,
+        0x00);
 
     // Configure interrupt pin
     status = _ICM20948_WriteByte(
@@ -373,4 +383,86 @@ void ICM20948_readTemperature(I2C_HandleTypeDef *hi2c, uint8_t selectI2cAddress,
 
     // Combine high and low bytes
     *reading = (readData[T_HIGH_BYTE] << 8) | readData[T_LOW_BYTE];
+}
+
+// ================= Magnetometer (AK09916) =================
+// AK09916 is accessed via ICM20948 I2C master pass-through.
+// For simplicity we put it into continuous measurement mode 2 (100Hz) and read raw XYZ.
+
+#define AK09916_I2C_ADDR          0x0C
+#define AK09916_REG_WIA1          0x00
+#define AK09916_REG_WIA2          0x01
+#define AK09916_REG_STATUS1       0x10
+#define AK09916_REG_HXL           0x11
+#define AK09916_REG_STATUS2       0x17
+#define AK09916_REG_CNTL2         0x31
+#define AK09916_REG_CNTL3         0x32
+#define AK09916_CMD_SOFT_RESET    0x01
+#define AK09916_MODE_POWER_DOWN   0x00
+#define AK09916_MODE_SINGLE       0x01
+#define AK09916_CONT_MODE_2       0x08  /* Continuous measurement mode 2 (100 Hz) */
+
+// Helper: enable pass-through (BYPASS) so MCU can talk directly to AK09916.
+static int icm_enable_bypass_(I2C_HandleTypeDef *hi2c, uint8_t sel){
+    // Select bank 0
+    if (_ICM20948_SelectUserBank(hi2c, sel, USER_BANK_0) != HAL_OK) return -1;
+    // Ensure internal I2C master is disabled so host can talk directly to AK09916
+    if (_ICM20948_WriteByte(hi2c, sel, ICM20948__USER_BANK_0__USER_CTRL__REGISTER, 0x00) != HAL_OK) return -1;
+    HAL_Delay(1);
+    // INT_PIN_CFG: set BYPASS_EN bit (bit 1)
+    uint8_t cfg = 0x02; // BYPASS_EN=1, others default
+    if (_ICM20948_WriteByte(hi2c, sel, ICM20948__USER_BANK_0__INT_PIN_CFG__REGISTER, cfg) != HAL_OK) return -1;
+    return 0;
+}
+
+int ICM20948_mag_enable(I2C_HandleTypeDef *hi2c, uint8_t selectI2cAddress){
+    if (mag_enabled) return 0;
+    if (icm_enable_bypass_(hi2c, selectI2cAddress) != 0) return -1;
+    HAL_Delay(5);
+    // Check WHO_AM_I (WIA1/WIA2) optionally (not enforced here)
+    uint8_t wia1=0,wia2=0;
+    HAL_I2C_Mem_Read(hi2c, AK09916_I2C_ADDR<<1, AK09916_REG_WIA1, I2C_MEMADD_SIZE_8BIT, &wia1, 1, 20);
+    HAL_I2C_Mem_Read(hi2c, AK09916_I2C_ADDR<<1, AK09916_REG_WIA2, I2C_MEMADD_SIZE_8BIT, &wia2, 1, 20);
+    // Soft reset to ensure a clean start
+    uint8_t cmd = AK09916_CMD_SOFT_RESET;
+    if (HAL_I2C_Mem_Write(hi2c, AK09916_I2C_ADDR<<1, AK09916_REG_CNTL3, I2C_MEMADD_SIZE_8BIT, &cmd, 1, 20) != HAL_OK) return -1;
+    HAL_Delay(1);
+
+    // Leave device in power-down; we'll request single measurements on demand.
+    cmd = AK09916_MODE_POWER_DOWN;
+    if (HAL_I2C_Mem_Write(hi2c, AK09916_I2C_ADDR<<1, AK09916_REG_CNTL2, I2C_MEMADD_SIZE_8BIT, &cmd, 1, 20) != HAL_OK) return -1;
+    HAL_Delay(2);
+    mag_enabled = 1;
+    return 0;
+}
+
+int ICM20948_mag_read_raw(I2C_HandleTypeDef *hi2c, uint8_t selectI2cAddress, int16_t *mx, int16_t *my, int16_t *mz){
+    (void)selectI2cAddress; // bypass mode direct addressing
+    if (!mag_enabled) return -1;
+    uint8_t cmd = AK09916_MODE_SINGLE;
+    if (HAL_I2C_Mem_Write(hi2c, AK09916_I2C_ADDR<<1, AK09916_REG_CNTL2, I2C_MEMADD_SIZE_8BIT, &cmd, 1, 20) != HAL_OK) return -1;
+
+    // Wait for data ready (DRDY=1). Allow up to ~20 ms.
+    uint32_t start = HAL_GetTick();
+    uint8_t st1 = 0;
+    do {
+        if (HAL_I2C_Mem_Read(hi2c, AK09916_I2C_ADDR<<1, AK09916_REG_STATUS1, I2C_MEMADD_SIZE_8BIT, &st1, 1, 10) != HAL_OK) return -1;
+        if (st1 & 0x01) break;
+        HAL_Delay(1);
+    } while ((HAL_GetTick() - start) < 20);
+    if ((st1 & 0x01) == 0) return -2; // timeout waiting for new data
+
+    uint8_t raw[6];
+    if (HAL_I2C_Mem_Read(hi2c, AK09916_I2C_ADDR<<1, AK09916_REG_HXL, I2C_MEMADD_SIZE_8BIT, raw, 6, 20) != HAL_OK) return -1;
+    // Reading ST2 clears the data-ready latch inside the AK09916 so the next sample can update.
+    uint8_t st2=0;
+    if (HAL_I2C_Mem_Read(hi2c, AK09916_I2C_ADDR<<1, AK09916_REG_STATUS2, I2C_MEMADD_SIZE_8BIT, &st2, 1, 10) != HAL_OK) return -1;
+    // Little-endian: L then H
+    int16_t x = (int16_t)(raw[1] << 8 | raw[0]);
+    int16_t y = (int16_t)(raw[3] << 8 | raw[2]);
+    int16_t z = (int16_t)(raw[5] << 8 | raw[4]);
+    if (mx) *mx = x;
+    if (my) *my = y;
+    if (mz) *mz = z;
+    return 0;
 }

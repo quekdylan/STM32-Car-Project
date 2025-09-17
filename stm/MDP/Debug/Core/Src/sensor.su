@@ -1,0 +1,5 @@
+../Core/Src/sensor.c:43:7:ultrasonic_init_ex	32	static
+../Core/Src/sensor.c:56:7:ultrasonic_init	24	static
+../Core/Src/sensor.c:61:7:ultrasonic_trigger	32	static
+../Core/Src/sensor.c:91:8:ultrasonic_get_distance_cm	4	static
+../Core/Src/sensor.c:103:8:HAL_TIM_IC_CaptureCallback	48	static
