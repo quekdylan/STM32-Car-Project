@@ -972,7 +972,7 @@ void oled_task(void *argument)
       if (!g_user_start_requested) {
         status_text = "Press to start";
       } else if (g_is_calibrating) {
-        status_text = "Calibrating";
+        status_text = "Calibrating..";
       } else if (g_current_instr) {
         status_text = instruction_to_text(g_current_instr);
       } else {

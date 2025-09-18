@@ -11,41 +11,32 @@
 // T U N A B L E   P A R A M E T E R S
 // =================================================================================
 
-// --- Motion Profile Configuration (Fixed distances in centimeters) ---
-// You can change these at runtime via move_set_profile_distances_cm().
-static float g_accel_dist_cm = 10.0f; // accelerate over first 10 cm
-static float g_decel_dist_cm = 15.0f; // decelerate over last 15 cm
+// --- Straight-line speed profile (cm distances and ticks/10 ms speeds) ---------
+static float g_accel_dist_cm = 10.0f; // length of acceleration ramp
+static float g_decel_dist_cm = 15.0f; // length of deceleration ramp
 
-// --- Speed Configuration ---
-// Speeds are defined in "encoder ticks per control period (10ms)".
-// You must tune these for your specific robot.
-#define V_MAX_TICKS_PER_DT (24.0f) // Max speed during cruise phase (e.g., 30 ticks / 10ms)
-#define V_MIN_TICKS_PER_DT (4.0f)  // Minimum speed to overcome static friction and ensure smooth start/stop
+#define V_MAX_TICKS_PER_DT        (24.0f) // cruise speed in encoder ticks per 10 ms
+#define V_MIN_TICKS_PER_DT        (2.0f)  // minimum speed to overcome stiction
 
-// --- Yaw Correction ---
-// Proportional gain for heading correction.
-// A small value gently corrects the heading. Too large a value will cause oscillation.
-// Units: (ticks/10ms) per degree of error.
-#define YAW_KP_TICKS_PER_DEG (3.0f)
+// --- Yaw PID (converts heading error to differential wheel ticks) --------------
+#define YAW_PID_KP_TICKS_PER_DEG        (3.0f)
+#define YAW_PID_KI_TICKS_PER_DEG_S      (0.05f)
+#define YAW_PID_KD_TICKS_PER_DEG_PER_S  (0.4f)
+#define YAW_PID_I_LIMIT_TICKS           (40.0f) // clamp to avoid windup
+#define YAW_PID_DT_S                    (0.01f) // move_tick_100Hz period
 
-// --- Turn Configuration ---
-// Speed for ackermann turns (encoder ticks / 10ms per wheel after scaling).
-#define TURN_BASE_TICKS_PER_DT   (12)     // base speed before inner/outer scaling
-#define TURN_YAW_TARGET_DEG      (90.0f)  // desired turn angle
-#define TURN_YAW_TOLERANCE_DEG   (0.5f)   // acceptable tolerance to stop
-#define TURN_YAW_SLOW_BAND_DEG   (10.0f)  // start slowing when within this band
-#define TURN_MIN_TICKS_PER_DT    (4)      // minimum per-wheel speed while turning
-// duration (in 100 Hz ticks) to hold/transition minimum speed at turn start to allow time for front wheels to turn
-static uint16_t g_turn_spinup_ticks = 100;
+// --- Turn profile & steering geometry ------------------------------------------
+#define TURN_BASE_TICKS_PER_DT    (12)    // nominal per-wheel ticks during steady turn
+#define TURN_MIN_TICKS_PER_DT     (2)     // floor to keep wheels turning
+#define TURN_YAW_TARGET_DEG       (90.0f) // nominal turn angle
+#define TURN_YAW_TOLERANCE_DEG    (0.5f)  // stop once within this yaw error
+#define TURN_YAW_SLOW_BAND_DEG    (10.0f) // start tapering speed inside this band
+static uint16_t g_turn_spinup_ticks = 120; // time to ramp from min to base speed
 
-// Ackermann geometry (cm) and steering calibration
-#define WHEELBASE_CM             (14.5f)
-#define TRACK_WIDTH_CM           (16.5f)
-// Estimated max physical front steering angle (deg) at Servo_WriteAngle ±100.
-#define STEER_MAX_DEG            (30.0f)
-
-// Steering angles for Ackermann (Servo_WriteAngle: -100=full left, +100=full right)
-#define STEER_ANGLE_MAG          (100.0f)  // magnitude for turning
+#define WHEELBASE_CM              (14.5f)
+#define TRACK_WIDTH_CM            (16.5f)
+#define STEER_MAX_DEG             (30.0f)  // max mechanical steering angle
+#define STEER_ANGLE_MAG           (100.0f) // servo command for full lock
 
 // =================================================================================
 // M O D U L E   S T A T E
@@ -85,6 +76,47 @@ typedef struct {
 static move_state_t ms = {0};
 extern Servo global_steer; // provided by main.c
 
+typedef struct {
+  float integral;    // accumulated error (deg * s)
+  float prev_error;  // previous error sample (deg)
+  uint8_t have_prev; // derivative guard
+} yaw_pid_state_t;
+
+static yaw_pid_state_t g_yaw_pid = {0};
+
+static void yaw_pid_reset(void)
+{
+  g_yaw_pid.integral = 0.0f;
+  g_yaw_pid.prev_error = 0.0f;
+  g_yaw_pid.have_prev = 0;
+}
+
+static float yaw_pid_step(float error_deg)
+{
+  g_yaw_pid.integral += error_deg * YAW_PID_DT_S;
+
+  if (YAW_PID_KI_TICKS_PER_DEG_S > 1e-6f) {
+    float max_int = YAW_PID_I_LIMIT_TICKS / YAW_PID_KI_TICKS_PER_DEG_S;
+    if (g_yaw_pid.integral >  max_int) g_yaw_pid.integral =  max_int;
+    if (g_yaw_pid.integral < -max_int) g_yaw_pid.integral = -max_int;
+  } else {
+    g_yaw_pid.integral = 0.0f;
+  }
+
+  float derivative = 0.0f;
+  if (g_yaw_pid.have_prev) {
+    derivative = (error_deg - g_yaw_pid.prev_error) / YAW_PID_DT_S;
+  } else {
+    g_yaw_pid.have_prev = 1;
+  }
+  g_yaw_pid.prev_error = error_deg;
+
+  float output = YAW_PID_KP_TICKS_PER_DEG * error_deg;
+  output += YAW_PID_KI_TICKS_PER_DEG_S * g_yaw_pid.integral;
+  output += YAW_PID_KD_TICKS_PER_DEG_PER_S * derivative;
+  return output;
+}
+
 // =================================================================================
 // P U B L I C   A P I
 // =================================================================================
@@ -106,6 +138,7 @@ void move_start_straight(float distance_cm) {
   motor_reset_encoders();
   control_sync_encoders();
   imu_zero_yaw(); // Ensure we start with a target heading of 0 degrees
+  yaw_pid_reset();
   ms.active = 1;
   ms.mode = MOVE_STRAIGHT;
   ms.dir = (distance_cm >= 0.0f) ? 1 : -1;
@@ -147,6 +180,7 @@ void move_start_turn(char dir_char)
   motor_reset_encoders();   // not strictly needed for turn, but keeps odom clean
   control_sync_encoders();
   imu_zero_yaw();           // measure delta from current heading
+  yaw_pid_reset();
   ms.active = 1;
   ms.mode = MOVE_TURN;
   // Determine turn side and drive direction
@@ -330,14 +364,19 @@ void move_tick_100Hz(void) {
   if (base_ticks < 0) base_ticks = 0;
   if (base_ticks == 0 && remaining_ticks > 0) base_ticks = 1; // ensure progress
 
-  // 5) Calculate yaw correction. Keep forward behavior and make reverse match it
-  // by flipping the bias sign when driving backward.
-  int32_t yaw_bias = (int32_t)lroundf(-current_yaw * YAW_KP_TICKS_PER_DEG);
-  if (ms.dir < 0) yaw_bias = -yaw_bias;
-  if (yaw_bias > base_ticks/2) yaw_bias = base_ticks/2;
-  if (yaw_bias < -(base_ticks/2)) yaw_bias = -(base_ticks/2);
-  
-  // 6) Combine base and yaw correction
+  // 5) Calculate yaw correction using PID.
+  float yaw_err_deg = -current_yaw; // target heading is 0 deg for straight segments
+  float yaw_out = yaw_pid_step(yaw_err_deg);
+  if (ms.dir < 0) yaw_out = -yaw_out; // reverse motion flips correction direction
+
+  float max_bias = 0.5f * (float)base_ticks;
+  if (max_bias < 1.0f) max_bias = 1.0f;
+  if (yaw_out >  max_bias) yaw_out =  max_bias;
+  if (yaw_out < -max_bias) yaw_out = -max_bias;
+
+  int32_t yaw_bias = (int32_t)lroundf(yaw_out);
+
+  // 6) Combine base magnitude and yaw correction
   int32_t left_target_ticks  = base_ticks - yaw_bias;
   int32_t right_target_ticks = base_ticks + yaw_bias;
 
