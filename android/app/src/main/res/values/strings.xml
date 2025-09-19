@@ -10,10 +10,10 @@
     <string name="type_message">Type a message…</string>
     <string name="clear">Clear</string>
     <string name="send">Send</string>
-    <string name="forward">MOVE FORWARD</string>
-    <string name="turn_left">TURN LEFT</string>
-    <string name="turn_right">TURN RIGHT</string>
-    <string name="reverse">REVERSE</string>
+    <string name="forward">F</string>
+    <string name="turn_left">TL</string>
+    <string name="turn_right">TR</string>
+    <string name="reverse">R</string>
     <string name="robot_status_label">Robot Status</string>
     <string name="robot_status_unknown">Unknown</string>
     <string name="open_arena">Go to Arena</string>

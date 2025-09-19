@@ -36,6 +36,7 @@ import java.util.Set;
 
 public class MainActivity extends AppCompatActivity {
 
+    // A variable to bound bluetooth service running in the background
     private BluetoothService bluetoothService;
     private boolean isServiceBound = false;
 
@@ -43,9 +44,16 @@ public class MainActivity extends AppCompatActivity {
     private Button btnDiscoverable, btnScan, btnChat, btnArena;
     private ListView listPairedDevices, listNearbyDevices;
 
+    // Array of strings of device name and MAC address
     private ArrayList<String> pairedDeviceList, nearbyDeviceList;
+
+    // Array of BluetoothDevice objects
     private ArrayList<BluetoothDevice> pairedDeviceListObjects, nearbyDeviceListObjects;
+
+    // Adapters for ListViews. Will be used to link UI and data source.
     private ArrayAdapter<String> pairedAdapter, nearbyAdapter;
+
+    // duration for device to be discoverable
     private final int discoverable_duration = 300; // 300 seconds = 5 minutes
     // BroadcastReceiver to listen for Bluetooth state changes
     private BluetoothService.OnMessageReceivedListener bluetoothListener;

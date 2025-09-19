@@ -50,6 +50,10 @@ public class BluetoothService extends Service {
         return binder;
     }
 
+    public boolean isConnected(){
+        return connectedThread != null;
+    }
+
     // --- Listener interface ---
     public interface OnMessageReceivedListener {
         void onMessageReceived(String message);
@@ -93,6 +97,8 @@ public class BluetoothService extends Service {
 
     }
 
+
+
     public Set<BluetoothDevice> getPairedDevices(Context context) {
         if (bluetoothAdapter != null) {
             if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT)
@@ -105,6 +111,7 @@ public class BluetoothService extends Service {
             return new HashSet<>();
         }
     }
+
 
     public class ConnectedThread extends Thread {
         private final BluetoothSocket mmSocket;

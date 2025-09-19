@@ -39,12 +39,12 @@ public class ArenaActivity extends AppCompatActivity {
     private TextView tvRobotCoord, tvRobotDir;
 
     private EditText etCount;
-    private Button btnGenerateMenu;
+    private Button btnGenerateMenu, btnForward, btnReverse, btnLeft, btnRight;
     private Spinner spinner;
     private ImageView ivPreview;
 
     private BluetoothService bluetoothService;
-    private boolean bound = false;
+    private boolean isServiceBound = false;
 
     private BluetoothService.OnMessageReceivedListener bluetoothListener = message -> {
         runOnUiThread(() -> {
@@ -113,14 +113,14 @@ public class ArenaActivity extends AppCompatActivity {
             public void onServiceConnected(ComponentName name, IBinder service) {
                 BluetoothService.LocalBinder binder = (BluetoothService.LocalBinder) service;
                 bluetoothService = binder.getService();
-                bound = true;
+                isServiceBound = true;
                 bluetoothService.addListener(bluetoothListener);
                 bluetoothService.startAcceptThread();
             }
 
             @Override
             public void onServiceDisconnected(ComponentName name) {
-                bound = false;
+                isServiceBound = false;
             }
         };
 
@@ -139,6 +139,10 @@ public class ArenaActivity extends AppCompatActivity {
             spinner = findViewById(R.id.spObstacleSpinner);
             ivPreview = findViewById(R.id.ivObstaclePreview);
             arenaView = findViewById(R.id.arenaView);
+            btnForward = findViewById(R.id.btnForward);
+            btnReverse = findViewById(R.id.btnReverse);
+            btnLeft = findViewById(R.id.btnLeft);
+            btnRight = findViewById(R.id.btnRight);
 
             btnGenerateMenu.setOnClickListener(v -> {
                 String input = etCount.getText().toString();
@@ -154,6 +158,11 @@ public class ArenaActivity extends AppCompatActivity {
                 adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
                 spinner.setAdapter(adapter);
             });
+
+            btnForward.setOnClickListener(v -> sendMovementCommand("f"));
+            btnReverse.setOnClickListener(v -> sendMovementCommand("r"));
+            btnLeft.setOnClickListener(v -> sendMovementCommand("tl"));
+            btnRight.setOnClickListener(v -> sendMovementCommand("tr"));
 
             spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
                 @Override
@@ -264,12 +273,12 @@ public class ArenaActivity extends AppCompatActivity {
         @Override
         protected void onDestroy () {
             super.onDestroy();
-            if (bound) {
+            if (isServiceBound) {
                 if (bluetoothService != null) {
                     bluetoothService.removeListener(bluetoothListener);
                 }
                 unbindService(connection);
-                bound = false;
+                isServiceBound = false;
             }
         }
 
@@ -279,6 +288,41 @@ public class ArenaActivity extends AppCompatActivity {
                 if (thread != null) {
                     thread.write(message.getBytes());
                 }
+            }
+        }
+
+        private void sendMovementCommand(String command) {
+            if (!isServiceBound) {
+                Toast.makeText(this, "Bluetooth service not ready", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            // Update robot locally before sending command
+            Robot robot = arena.getRobot();
+            if (robot != null) {
+                switch (command) {
+                    case "f":
+                        robot.moveForward();
+                        break;
+                    case "r":
+                        robot.moveBackward();
+                        break;
+                    case "tl":
+                        robot.turnLeft();
+                        break;
+                    case "tr":
+                        robot.turnRight();
+                        break;
+                }
+                arenaView.invalidate(); // Redraw robot immediately
+                tvRobotCoord.setText("(" + robot.getX() + "," + robot.getY() + ")");
+                tvRobotDir.setText(robot.getFacing().name());
+            }
+
+            if (bluetoothService.getConnectedThread() != null) {
+                bluetoothService.getConnectedThread().write(command.getBytes());
+            } else {
+                Toast.makeText(this, "No device connected", Toast.LENGTH_SHORT).show();
             }
         }
     }

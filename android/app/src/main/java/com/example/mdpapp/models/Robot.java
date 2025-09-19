@@ -17,4 +17,40 @@ public class Robot {
     public void setX(int x) { this.x = x; }
     public void setY(int y) { this.y = y; }
     public void setFacing(Direction facing) { this.facing = facing; }
+
+    public void moveForward() {
+        switch (facing) {
+            case N: y--; break;
+            case S: y++; break;
+            case E: x++; break;
+            case W: x--; break;
+        }
+    }
+
+    public void moveBackward() {
+        switch (facing) {
+            case N: y++; break;
+            case S: y--; break;
+            case E: x--; break;
+            case W: x++; break;
+        }
+    }
+
+    public void turnLeft() {
+        switch (facing) {
+            case N: facing = Direction.W; break;
+            case W: facing = Direction.S; break;
+            case S: facing = Direction.E; break;
+            case E: facing = Direction.N; break;
+        }
+    }
+
+    public void turnRight() {
+        switch (facing) {
+            case N: facing = Direction.E; break;
+            case E: facing = Direction.S; break;
+            case S: facing = Direction.W; break;
+            case W: facing = Direction.N; break;
+        }
+    }
 }

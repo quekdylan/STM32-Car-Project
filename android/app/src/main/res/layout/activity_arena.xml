@@ -117,25 +117,71 @@
             android:layout_height="match_parent"
             android:layout_weight="2" />
 
-        <LinearLayout
+        <GridLayout
             android:id="@+id/buttonPanel"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1">
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:alignmentMode="alignMargins"
+            android:columnCount="3"
+            android:rowCount="3"
+            android:layout_gravity="center"
+            android:rowOrderPreserved="false"
+            android:layout_margin="16dp">
 
-            <Button
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Move" />
+            <!-- Empty top-left -->
+            <View
+                android:layout_width="60dp"
+                android:layout_height="60dp" />
 
+            <!-- Forward button -->
             <Button
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Rotate"
-                android:layout_marginTop="8dp" />
-        </LinearLayout>
+                android:id="@+id/btnForward"
+                android:layout_width="60dp"
+                android:layout_height="60dp"
+                android:text="@string/forward" />
+
+            <!-- Empty top-right -->
+            <View
+                android:layout_width="60dp"
+                android:layout_height="60dp" />
+
+            <!-- Left button -->
+            <Button
+                android:id="@+id/btnLeft"
+                android:layout_width="60dp"
+                android:layout_height="60dp"
+                android:text="@string/turn_left" />
+
+            <!-- Empty center (no stop button) -->
+            <View
+                android:layout_width="60dp"
+                android:layout_height="60dp" />
+
+            <!-- Right button -->
+            <Button
+                android:id="@+id/btnRight"
+                android:layout_width="60dp"
+                android:layout_height="60dp"
+                android:text="@string/turn_right" />
+
+            <!-- Empty bottom-left -->
+            <View
+                android:layout_width="60dp"
+                android:layout_height="60dp" />
+
+            <!-- Reverse button -->
+            <Button
+                android:id="@+id/btnReverse"
+                android:layout_width="60dp"
+                android:layout_height="60dp"
+                android:text="@string/reverse" />
+
+            <!-- Empty bottom-right -->
+            <View
+                android:layout_width="60dp"
+                android:layout_height="60dp" />
+
+        </GridLayout>
     </LinearLayout>
 
 </LinearLayout>
