@@ -24,6 +24,7 @@ import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.GridLayout;
 import android.widget.ImageView;
 import android.widget.Spinner;
 import android.widget.TextView;
@@ -42,8 +43,7 @@ public class ArenaActivity extends AppCompatActivity {
     private TextView tvRobotCoord, tvRobotDir, tvRobotStatus, tvStatusLabel;
     private EditText etCount;
     private Button btnGenerateMenu, btnForward, btnReverse, btnLeft, btnRight;
-    private Spinner spinner;
-    private ImageView ivPreview;
+    private GridLayout glObstaclePreviews;
 
     private BluetoothService bluetoothService;
     private boolean isServiceBound = false;
@@ -145,8 +145,7 @@ public class ArenaActivity extends AppCompatActivity {
         tvRobotDir = findViewById(R.id.tvRobotDir);
         etCount = findViewById(R.id.etObstacleCount);
         btnGenerateMenu = findViewById(R.id.btnGenerateMenu);
-        spinner = findViewById(R.id.spObstacleSpinner);
-        ivPreview = findViewById(R.id.ivObstaclePreview);
+        glObstaclePreviews = findViewById(R.id.glObstaclePreviews);
         arenaView = findViewById(R.id.arenaView);
         btnForward = findViewById(R.id.btnForward);
         btnReverse = findViewById(R.id.btnReverse);
@@ -160,14 +159,46 @@ public class ArenaActivity extends AppCompatActivity {
             if (input.isEmpty()) return;
             int n = Integer.parseInt(input);
 
-            // Populate spinner with obstacle IDs
-            String[] items = new String[n];
-            for (int i = 0; i < n; i++) items[i] = String.valueOf(i + 1);
+            glObstaclePreviews.removeAllViews(); // Clear previous previews
+            glObstaclePreviews.setColumnCount(8); // fixed 8 columns per row
 
-            ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-                    android.R.layout.simple_spinner_item, items);
-            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-            spinner.setAdapter(adapter);
+            for (int i = 1; i <= n; i++) {
+                ImageView iv = new ImageView(this);
+                GridLayout.LayoutParams params = new GridLayout.LayoutParams();
+                params.width = 50;
+                params.height = 50;
+                params.setMargins(4, 4, 4, 4);
+                iv.setLayoutParams(params);
+
+                iv.setImageResource(getResources().getIdentifier("obstacle_" + i, "drawable", getPackageName()));
+                iv.setContentDescription("Obstacle " + i);
+                iv.setTag(i);
+
+                // Optional: set click or long-click listeners
+                iv.setOnLongClickListener(view -> {
+                    int id = (int) view.getTag();
+                    Obstacle existing = arena.getObstacleById(id);
+                    if (existing != null) {
+                        arena.removeObstacle(existing);
+                        arenaView.invalidate();
+                    }
+                    Obstacle obstacleToDrag = existing != null ? existing : new Obstacle(id, -1, -1);
+
+                    View.DragShadowBuilder shadow = new View.DragShadowBuilder(view) {
+                        @Override
+                        public void onProvideShadowMetrics(Point size, Point touch) {
+                            int width = (int) (view.getWidth() * 1.5f);
+                            int height = (int) (view.getHeight() * 1.5f);
+                            size.set(width, height);
+                            touch.set(width / 2, height / 2);
+                        }
+                    };
+                    view.startDragAndDrop(null, shadow, obstacleToDrag, 0);
+                    return true;
+                });
+
+                glObstaclePreviews.addView(iv);
+            }
         });
 
         btnForward.setOnClickListener(v -> sendMovementCommand("f"));
@@ -175,80 +206,12 @@ public class ArenaActivity extends AppCompatActivity {
         btnLeft.setOnClickListener(v -> sendMovementCommand("tl"));
         btnRight.setOnClickListener(v -> sendMovementCommand("tr"));
 
-        spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                int obstacleId = position + 1;
-
-                // Set preview ImageView
-                String drawableName = "obstacle_" + obstacleId;
-                int resId = getResources().getIdentifier(
-                        "obstacle_" + obstacleId,
-                        "drawable",
-                        getPackageName()
-                );
-
-                ivPreview.setImageResource(resId);
-                ivPreview.setTag(obstacleId);
-            }
-
-            @Override
-            public void onNothingSelected(AdapterView<?> parent) {
-            }
-        });
-
-        ivPreview.setOnLongClickListener(v -> {
-            int id = (int) v.getTag();
-
-            // Check if obstacle with this ID already exists in arena
-            Obstacle existing = arena.getObstacleById(id);
-
-            if (existing != null) {
-                // Pick up existing obstacle
-                arena.removeObstacle(existing);
-                arenaView.invalidate();
-
-                // Notify listener
-                if (arenaView.getOnObstacleChangeListener() != null) {
-                    arenaView.getOnObstacleChangeListener().onObstacleRemoved(existing.getId());
-                }
-            }
-
-            Obstacle obstacleToDrag = existing != null ? existing : new Obstacle(id, -1, -1);
-
-            // Start drag, passing the obstacle as local state
-            View.DragShadowBuilder shadow = new View.DragShadowBuilder(v) {
-                @Override
-                public void onProvideShadowMetrics(Point size, Point touch) {
-                    // Make the shadow bigger than the view
-                    int width = (int) (v.getWidth() * 1.5f);
-                    int height = (int) (v.getHeight() * 1.5f);
-                    size.set(width, height);
-
-                    // Position the touch point at the center of the shadow
-                    touch.set(width / 2, height / 2);
-                }
-
-                @Override
-                public void onDrawShadow(Canvas canvas) {
-                    // Draw the scaled bitmap of the view
-                    Bitmap bitmap = Bitmap.createBitmap(v.getWidth(), v.getHeight(), Bitmap.Config.ARGB_8888);
-                    Canvas c = new Canvas(bitmap);
-                    v.draw(c);
-                    Bitmap scaled = Bitmap.createScaledBitmap(bitmap, (int) (v.getWidth() * 1.5f), (int) (v.getHeight() * 1.5f), true);
-                    canvas.drawBitmap(scaled, 0, 0, null);
-                }
-            };
-
-            v.startDragAndDrop(null, shadow, obstacleToDrag, 0);
-            return true;
-        });
 
         arenaView.setOnObstaclePlacedListener(obstacle -> {
             sendBluetoothMessage("OBSTACLE_ADD," + obstacle.getId() + "," + obstacle.getX() + "," + obstacle.getY());
         });
 
-        arena = new Arena(10, 10); // 10x10 grid
+        arena = new Arena(20, 20); // 10x10 grid
         arenaView.setArena(arena);
 
         arenaView.setOnObstacleChangeListener(new ArenaView.OnObstacleChangeListener() {

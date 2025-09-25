@@ -220,8 +220,6 @@ public class BluetoothService extends Service {
             try {
                 // Connect through the socket.
                 mmSocket.connect();
-                Log.d(TAG, "Connected to " + mmDevice.getName());
-                notifyMessageReceived("STATUS:Connected to " + mmDevice.getName());
             } catch (IOException connectException) {
                 // Failed to connect
                 Log.e(TAG, "Connection failed", connectException);

@@ -28,19 +28,6 @@
         android:layout_height="wrap_content"
         android:text="@string/scan_nearby_devices" />
 
-    <!--Connected Devices List-->
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/connected_devices"
-        android:paddingTop="8dp"/>
-
-    <ListView
-        android:id="@+id/listConnectedDevices"
-        android:layout_width="match_parent"
-        android:layout_height="150dp"
-        android:background="#EEEEEE"/>
-
     <!--Paired Devices List-->
     <TextView
         android:layout_width="wrap_content"
@@ -48,13 +35,13 @@
         android:text="@string/paired_devices"
         android:paddingTop="8dp"/>
 
+    <!--Nearby Devices List-->
     <ListView
         android:id="@+id/listPairedDevices"
         android:layout_width="match_parent"
         android:layout_height="150dp"
-        android:background="#EEEEEE"/>
+        android:background="#EEEEEE" />
 
-    <!--Nearby Devices List-->
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
