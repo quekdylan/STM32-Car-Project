@@ -3,8 +3,10 @@ package com.example.mdpapp.activities;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.preference.PreferenceManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
@@ -16,14 +18,21 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.example.mdpapp.R;
 import com.example.mdpapp.services.BluetoothService;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.List;
 
 public class ChatActivity extends AppCompatActivity {
 
     private TextView tvMessages, tvRobotStatus, tvStatusLabel;
     private EditText etMessage;
-    private Button btnSend, btnClear;
-    private Button btnForward, btnReverse, btnLeft, btnRight;
+    private Button btnSend, btnClear, btnPrev, btnNext, btnClearHistory;
+    private static final String HISTORY_KEY = "message_history";
+    private static final int MAX_HISTORY = 50; // Keep only latest 50 messages
+    private final List<String> messageHistory = new ArrayList<>();
+    private int historyIndex = -1;  // -1 means "no history selected"
 
     private BluetoothService bluetoothService;
 
@@ -85,25 +94,55 @@ public class ChatActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_chat);
 
+        // Load history at startup
+        loadMessageHistory();
+
         // Initialize UI
         tvMessages = findViewById(R.id.tvMessages);
         etMessage = findViewById(R.id.etMessage);
         btnSend = findViewById(R.id.btnSend);
         btnClear = findViewById(R.id.btnClear);
-        tvRobotStatus = findViewById(R.id.tvRobotStatus);
-        tvStatusLabel = findViewById(R.id.tvStatusLabel);
-
-        // Directional buttons
-        btnForward = findViewById(R.id.btnForward);
-        btnReverse = findViewById(R.id.btnReverse);
-        btnLeft = findViewById(R.id.btnLeft);
-        btnRight = findViewById(R.id.btnRight);
-
-
+        btnPrev = findViewById(R.id.btnPrev);
+        btnNext = findViewById(R.id.btnNext);
+        btnClearHistory = findViewById(R.id.btnClearHistory);
 
         // Bind to BluetoothService
         Intent serviceIntent = new Intent(this, BluetoothService.class);
         bindService(serviceIntent, serviceConnection, BIND_AUTO_CREATE);
+
+        btnClearHistory.setOnClickListener(v -> {
+            // Clear in-memory list
+            messageHistory.clear();
+            historyIndex = -1;
+
+            // Clear SharedPreferences
+            SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
+            prefs.edit().remove(HISTORY_KEY).apply();
+
+            Toast.makeText(this, "Message history cleared", Toast.LENGTH_SHORT).show();
+        });
+
+        btnPrev.setOnClickListener(v -> {
+            if (!messageHistory.isEmpty()) {
+                if (historyIndex == -1) historyIndex = messageHistory.size() - 1;
+                else if (historyIndex > 0) historyIndex--;
+                etMessage.setText(messageHistory.get(historyIndex));
+                etMessage.setSelection(etMessage.getText().length()); // Move cursor to end
+            }
+        });
+
+        btnNext.setOnClickListener(v -> {
+            if (!messageHistory.isEmpty() && historyIndex != -1) {
+                if (historyIndex < messageHistory.size() - 1) {
+                    historyIndex++;
+                    etMessage.setText(messageHistory.get(historyIndex));
+                } else {
+                    historyIndex = -1;
+                    etMessage.setText("");
+                }
+                etMessage.setSelection(etMessage.getText().length());
+            }
+        });
 
         // Send button
         btnSend.setOnClickListener(v -> {
@@ -115,6 +154,9 @@ public class ChatActivity extends AppCompatActivity {
             String message = etMessage.getText().toString().trim();
             if (!message.isEmpty() && bluetoothService.getConnectedThread() != null) {
                 bluetoothService.getConnectedThread().write(message.getBytes());
+                messageHistory.add(message);   // <-- Save message
+                saveMessageHistory();
+                historyIndex = -1;             // Reset index after sending
                 etMessage.setText("");
             } else {
                 Toast.makeText(this, "No device connected", Toast.LENGTH_SHORT).show();
@@ -124,16 +166,12 @@ public class ChatActivity extends AppCompatActivity {
         // Clear button
         btnClear.setOnClickListener(v -> etMessage.setText(""));
 
-        // Directional button listeners
-        btnForward.setOnClickListener(v -> sendMovementCommand("f"));
-        btnReverse.setOnClickListener(v -> sendMovementCommand("r"));
-        btnLeft.setOnClickListener(v -> sendMovementCommand("tl"));
-        btnRight.setOnClickListener(v -> sendMovementCommand("tr"));
     }
 
     @Override
     protected void onStop() {
         super.onStop();
+        saveMessageHistory(); // Save when leaving screen
         if (bluetoothService != null) {
             bluetoothService.removeListener(bluetoothListener);
         }
@@ -151,5 +189,37 @@ public class ChatActivity extends AppCompatActivity {
         }
     }
 
+
+    private void saveMessageHistory() {
+        if (messageHistory.size() > MAX_HISTORY) {
+            // Keep only latest MAX_HISTORY messages
+            List<String> latest = messageHistory.subList(
+                    messageHistory.size() - MAX_HISTORY, messageHistory.size()
+            );
+            messageHistory.clear();
+            messageHistory.addAll(latest);
+        }
+
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
+        SharedPreferences.Editor editor = prefs.edit();
+        JSONArray jsonArray = new JSONArray(messageHistory);
+        editor.putString(HISTORY_KEY, jsonArray.toString());
+        editor.apply();
+    }
+
+    private void loadMessageHistory() {
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
+        String jsonString = prefs.getString(HISTORY_KEY, null);
+        if (jsonString != null) {
+            try {
+                JSONArray jsonArray = new JSONArray(jsonString);
+                for (int i = 0; i < jsonArray.length(); i++) {
+                    messageHistory.add(jsonArray.getString(i));
+                }
+            } catch (Exception e) {
+                Log.d("ChatActivity", "Failed to load message history: " + e.getMessage());
+            }
+        }
+    }
 
 }

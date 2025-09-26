@@ -69,6 +69,13 @@ public class ArenaView extends View {
 
     }
 
+    @Override
+    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+        int size = Math.min(getMeasuredWidth(), getMeasuredHeight());
+        setMeasuredDimension(size, size); // make the view square
+    }
+
     private void init() {
         gridPaint = new Paint();
         gridPaint.setColor(Color.GRAY);
@@ -110,11 +117,10 @@ public class ArenaView extends View {
                         // Snap to grid
                         int cols = arena.getWidth();
                         int rows = arena.getHeight();
-                        float cellWidth = getWidth() / (float) cols;
-                        float cellHeight = getHeight() / (float) rows;
+                        float cellSize = Math.min(getWidth() / (float) cols, getHeight() / (float) rows);
 
-                        int x = Math.round(event.getX() / cellWidth);
-                        int y = Math.round(event.getY() / cellHeight);
+                        int x = Math.round(event.getX() / cellSize);
+                        int y = Math.round(event.getY() / cellSize);
 
                         x = Math.max(0, Math.min(x, cols - 1));
                         y = Math.max(0, Math.min(y, rows - 1));
@@ -153,14 +159,13 @@ public class ArenaView extends View {
     private void handleDoubleTap(float x, float y) {
         int rows = arena.getHeight();
         int cols = arena.getWidth();
-        float cellWidth = getWidth() / (float) cols;
-        float cellHeight = getHeight() / (float) rows;
+        float cellSize = Math.min(getWidth() / (float) cols, getHeight() / (float) rows);
 
         for (Obstacle o : arena.getObstacles()) {
-            float left = o.getX() * cellWidth;
-            float top = o.getY() * cellHeight;
-            float right = left + cellWidth;
-            float bottom = top + cellHeight;
+            float left = o.getX() * cellSize;
+            float top = o.getY() * cellSize;
+            float right = left + cellSize;
+            float bottom = top + cellSize;
 
             if (x >= left && x <= right && y >= top && y <= bottom) {
                 selectedForSide = o;  // mark this obstacle for side selection
@@ -174,15 +179,14 @@ public class ArenaView extends View {
     private void handleLongPress(float x, float y) {
         int rows = arena.getHeight();
         int cols = arena.getWidth();
-        float cellWidth = getWidth() / (float) cols;
-        float cellHeight = getHeight() / (float) rows;
+        float cellSize = Math.min(getWidth() / (float) cols, getHeight() / (float) rows);
 
         selectedObstacle = null;
         for (Obstacle o : arena.getObstacles()) {
-            float left = o.getX() * cellWidth;
-            float top = o.getY() * cellHeight;
-            float right = left + cellWidth;
-            float bottom = top + cellHeight;
+            float left = o.getX() * cellSize;
+            float top = o.getY() * cellSize;
+            float right = left + cellSize;
+            float bottom = top + cellSize;
 
             if (x >= left && x <= right && y >= top && y <= bottom) {
                 selectedObstacle = o;
@@ -208,15 +212,13 @@ public class ArenaView extends View {
     private void drawGrid(Canvas canvas) {
         int rows = arena.getHeight();
         int cols = arena.getWidth();
-
-        float cellWidth = getWidth() / (float) cols;
-        float cellHeight = getHeight() / (float) rows;
+        float cellSize = Math.min(getWidth() / (float) cols, getHeight() / (float) rows);
 
         for (int i = 0; i <= rows; i++) {
-            canvas.drawLine(0, i * cellHeight, getWidth(), i * cellHeight, gridPaint);
+            canvas.drawLine(0, i * cellSize, getWidth(), i * cellSize, gridPaint);
         }
         for (int j = 0; j <= cols; j++) {
-            canvas.drawLine(j * cellWidth, 0, j * cellWidth, getHeight(), gridPaint);
+            canvas.drawLine(j * cellSize, 0, j * cellSize, getHeight(), gridPaint);
         }
     }
 
@@ -226,14 +228,13 @@ public class ArenaView extends View {
     private void drawObstacles(Canvas canvas) {
         int rows = arena.getHeight();
         int cols = arena.getWidth();
-        float cellWidth = getWidth() / (float) cols;
-        float cellHeight = getHeight() / (float) rows;
+        float cellSize = Math.min(getWidth() / (float) cols, getHeight() / (float) rows);
 
         for (Obstacle o : arena.getObstacles()) {
-            float left = o.getX() * cellWidth;
-            float top = o.getY() * cellHeight;
-            float right = left + cellWidth;
-            float bottom = top + cellHeight;
+            float left = o.getX() * cellSize;
+            float top = o.getY() * cellSize;
+            float right = left + cellSize;
+            float bottom = top + cellSize;
 
             float drawLeft = left;
             float drawTop = top;
@@ -308,11 +309,10 @@ public class ArenaView extends View {
 
         int rows = arena.getHeight();
         int cols = arena.getWidth();
-        float cellWidth = getWidth() / (float) cols;
-        float cellHeight = getHeight() / (float) rows;
+        float cellSize = Math.min(getWidth() / (float) cols, getHeight() / (float) rows);
 
-        float left = r.getX() * cellWidth;
-        float top = r.getY() * cellHeight;
+        float left = r.getX() * cellSize;
+        float top = r.getY() * cellSize;
 
         Bitmap robotBitmap;
         switch (r.getFacing()) {
@@ -334,7 +334,7 @@ public class ArenaView extends View {
         }
 
         // Scale the bitmap to fit the cell
-        Bitmap scaledBitmap = Bitmap.createScaledBitmap(robotBitmap, (int) cellWidth, (int) cellHeight, false);
+        Bitmap scaledBitmap = Bitmap.createScaledBitmap(robotBitmap, (int) cellSize, (int) cellSize, false);
         canvas.drawBitmap(scaledBitmap, left, top, null);
     }
 
@@ -366,15 +366,14 @@ public class ArenaView extends View {
 
         int rows = arena.getHeight();
         int cols = arena.getWidth();
-        float cellWidth = getWidth() / (float) cols;
-        float cellHeight = getHeight() / (float) rows;
+        float cellSize = Math.min(getWidth() / (float) cols, getHeight() / (float) rows);
 
         // Change surface for side selection after select obstacle and
         if (selectedForSide != null && event.getAction() == MotionEvent.ACTION_DOWN) {
-            float drawLeft = selectedForSide.getX() * cellWidth;
-            float drawTop = selectedForSide.getY() * cellHeight;
-            float drawRight = drawLeft + cellWidth;
-            float drawBottom = drawTop + cellHeight;
+            float drawLeft = selectedForSide.getX() * cellSize;
+            float drawTop = selectedForSide.getY() * cellSize;
+            float drawRight = drawLeft + cellSize;
+            float drawBottom = drawTop + cellSize;
 
             int arrowSize = 50; // adjust size
             float centerX = (drawLeft + drawRight) / 2 - arrowSize / 2;
@@ -426,10 +425,10 @@ public class ArenaView extends View {
                 // Check if touching an existing obstacle
                 selectedObstacle = null;
                 for (Obstacle o : arena.getObstacles()) {
-                    float left = o.getX() * cellWidth;
-                    float top = o.getY() * cellHeight;
-                    float right = left + cellWidth;
-                    float bottom = top + cellHeight;
+                    float left = o.getX() * cellSize;
+                    float top = o.getY() * cellSize;
+                    float right = left + cellSize;
+                    float bottom = top + cellSize;
 
                     if (touchX >= left && touchX <= right && touchY >= top && touchY <= bottom) {
                         selectedObstacle = o; // pick obstacle to drag
@@ -445,8 +444,8 @@ public class ArenaView extends View {
 
             case MotionEvent.ACTION_MOVE:
                 if (selectedObstacle != null) {
-                    float newX = (touchX - dragOffsetX + cellWidth / 2) / cellWidth;
-                    float newY = (touchY - dragOffsetY + cellHeight / 2) / cellHeight;
+                    float newX = (touchX - dragOffsetX + cellSize / 2) / cellSize;
+                    float newY = (touchY - dragOffsetY + cellSize / 2) / cellSize;
 
                     selectedObstacle.setX(Math.round(newX));
                     selectedObstacle.setY(Math.round(newY));
@@ -460,8 +459,8 @@ public class ArenaView extends View {
                     dragOffsetY = 0;
 
                     // Snap to grid
-                    int snappedX = Math.round(touchX / cellWidth);
-                    int snappedY = Math.round(touchY / cellHeight);
+                    int snappedX = Math.round(touchX / cellSize);
+                    int snappedY = Math.round(touchY / cellSize);
 
                     boolean wasInArena = arena.getObstacles().contains(selectedObstacle);
 

@@ -18,4 +18,7 @@
     <string name="robot_status_unknown">Unknown</string>
     <string name="open_arena">Go to Arena</string>
     <string name="initial_robot_info">Robot: (0,0) N</string>
+    <string name="prev">↑ Prev</string>
+    <string name="next">↓ Next</string>
+    <string name="clear_history">Clear History</string>
 </resources>
