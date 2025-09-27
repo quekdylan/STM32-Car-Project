@@ -30,6 +30,7 @@
 #include "motor.h"
 #include "pid.h"
 #include "movements.h"
+#include "sensor.h"
 
 #include <stdio.h>   // for snprintf
 #include <string.h>  // for strlen
@@ -183,6 +184,19 @@ int main(void)
   MX_USART3_UART_Init();
   MX_TIM12_Init();
   /* USER CODE BEGIN 2 */
+// Initialize ultrasonic ranger (TIM12 CH1 for echo, PB13 trigger)
+  float tim12_tick_us = 1.0f;
+  uint32_t pclk1_hz = HAL_RCC_GetPCLK1Freq();
+  if (pclk1_hz > 0U) {
+    uint32_t tim_clk_hz = pclk1_hz;
+    if ((RCC->CFGR & RCC_CFGR_PPRE1) != RCC_CFGR_PPRE1_DIV1) {
+      tim_clk_hz *= 2U;
+    }
+    tim12_tick_us = ((float)(htim12.Init.Prescaler + 1U) * 1000000.0f) / (float)tim_clk_hz;
+  }
+  ultrasonic_init_ex(&htim12, TIM_CHANNEL_1, ULTRASONIC_TRIG_GPIO_Port, ULTRASONIC_TRIG_Pin, tim12_tick_us);
+  ultrasonic_trigger();
+
 OLED_Init();
 motor_init();          // Initialize motors (PWM + encoders)
 control_init();        // Start 100 Hz control loop tick (TIM5 or similar)
@@ -773,8 +787,11 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin Output Level */
+  /*Configure GPIO pins Output Level */
   HAL_GPIO_WritePin(GPIOD, OLED_DC_Pin|OLED_RES_Pin|OLED_SDA_Pin|OLED_SCL_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(ULTRASONIC_TRIG_GPIO_Port, ULTRASONIC_TRIG_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : LED3_Pin */
   GPIO_InitStruct.Pin = LED3_Pin;
@@ -789,6 +806,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : ULTRASONIC_TRIG_Pin */
+  GPIO_InitStruct.Pin = ULTRASONIC_TRIG_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(ULTRASONIC_TRIG_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : USER_BUTTON_Pin */
   GPIO_InitStruct.Pin = USER_BUTTON_Pin;
@@ -867,7 +891,7 @@ void StartDefaultTask(void *argument)
   // Define instructions
   typedef struct { char dir; float dist_cm; } instr_t;
   /////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  const instr_t program[] = {{'S',200.0f},{'l', 0.0f},{'R',0.0f}, {'S',125.0f}};
+  const instr_t program[] = {{'S',90.0f}};
   /////////////////////////////////////////////////////////////////////////////////////////////////////////////
   const int program_len = sizeof(program)/sizeof(program[0]);
 
@@ -951,8 +975,8 @@ void oled_task(void *argument)
   OLED_Clear();
   OLED_ShowString(0, 16, (uint8_t*)"Yaw: ");
   OLED_ShowString(88, 16, (uint8_t*)" deg");
-  OLED_ShowString(0, 32, (uint8_t*)"T:");
-  OLED_ShowChar(48, 32, ',', 12, 1);
+  OLED_ShowString(0, 32, (uint8_t*)"Dist:");
+  OLED_ShowString(88, 32, (uint8_t*)"cm");
   OLED_ShowString(0, 48, (uint8_t*)"M:");
   OLED_ShowChar(48, 48, ',', 12, 1);
   OLED_Refresh_Gram();
@@ -964,8 +988,20 @@ void oled_task(void *argument)
       last_tick = now;
 
       float yawf = imu_get_yaw();
-      int32_t tL=0,tR=0,mL=0,mR=0;
-      control_get_target_and_measured(&tL, &tR, &mL, &mR);
+      int32_t mL = 0;
+      int32_t mR = 0;
+      control_get_target_and_measured(NULL, NULL, &mL, &mR);
+
+      float distance_cm = ultrasonic_get_distance_cm();
+      if (!isfinite(distance_cm) || distance_cm < 0.0f) {
+        distance_cm = 0.0f;
+      }
+      if (distance_cm > 999.9f) {
+        distance_cm = 999.9f;
+      }
+      int dist10 = (int)(distance_cm * 10.0f + 0.5f);
+      int dist_cm_whole = dist10 / 10;
+      int dist_tenth = dist10 % 10;
 
       // Status line: prompt, calibration state, or descriptive instruction text
       const char *status_text = NULL;
@@ -996,11 +1032,13 @@ void oled_task(void *argument)
       OLED_ShowChar(72, 16, '.', 12, 1);
       OLED_ShowChar(80, 16, (char)('0' + yaw_tenth), 12, 1);
 
-  // Targets: clear small areas first to avoid ghosting, then draw (show absolute ticks)
-      OLED_ShowString(16, 32, (uint8_t*)"    ");
-      OLED_ShowString(56, 32, (uint8_t*)"    ");
-  OLED_ShowNumber(16, 32, (uint32_t)(tL < 0 ? -tL : tL), 4, 12);
-  OLED_ShowNumber(56, 32, (uint32_t)(tR < 0 ? -tR : tR), 4, 12);
+      // Distance: clear numeric area first to avoid ghosting, then draw ultrasonic reading
+      OLED_ShowString(40, 32, (uint8_t*)"     ");
+      OLED_ShowNumber(40, 32, (uint32_t)dist_cm_whole, 4, 12);
+      OLED_ShowChar(64, 32, '.', 12, 1);
+      OLED_ShowChar(72, 32, (char)('0' + dist_tenth), 12, 1);
+      OLED_ShowString(88, 32, (uint8_t*)"cm");
+      ultrasonic_trigger();
 
   // Measured: clear small areas first to avoid ghosting, then draw (show absolute ticks)
       OLED_ShowString(16, 48, (uint8_t*)"    ");
