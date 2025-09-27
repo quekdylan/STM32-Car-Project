@@ -10,6 +10,16 @@ void move_start_straight(float distance_cm);
 // dir: 'L' or 'l' for left (CCW), 'R' or 'r' for right (CW).
 void move_start_turn(char dir);
 
+// Start a fast turn (higher speed).
+// dir: 'L' or 'l' for left (CCW), 'R' or 'r' for right (CW).
+void move_start_fast_turn(char dir);
+
+// Start a fast turn with custom angle.
+// dir: 'L' for left (CCW), 'R' for right (CW).
+// angle_deg: desired turn angle in degrees.
+void move_start_fast_turn_angle(char dir, float angle_deg);
+
+
 // Abort an ongoing move and stop motors immediately.
 void move_abort(void);
 

@@ -2076,3 +2076,42 @@ C Model Exception: C Model Status [Element main.c does not exist.]
 	at org.eclipse.jface.text.reconciler.AbstractReconciler$BackgroundThread.run(AbstractReconciler.java:207)
 !SUBENTRY 1 org.eclipse.cdt.core 4 969 2025-09-18 23:32:29.493
 !MESSAGE Element main.c does not exist.
+!SESSION 2025-09-19 09:24:11.686 -----------------------------------------------
+eclipse.buildId=Version 1.19.0
+java.version=21.0.3
+java.vendor=Eclipse Adoptium
+BootLoader constants: OS=macosx, ARCH=x86_64, WS=cocoa, NL=en_SG
+Framework arguments:  -keyring /Users/dylan/.eclipse_keyring
+Command-line arguments:  -os macosx -ws cocoa -arch x86_64 -keyring /Users/dylan/.eclipse_keyring
+
+!ENTRY com.st.stm32cube.ide.mcu.informationcenter 1 1 2025-09-19 09:26:11.107
+!MESSAGE Log4j2 initialized with config file /Users/dylan/Desktop/NTU/SC2079/SC2079-MDP-Group-19/stm/.metadata/.log4j2.xml
+
+!ENTRY com.st.stm32cube.ide.mcu.ide 1 1 2025-09-19 09:26:23.363
+!MESSAGE Started RMI Server, listening on port 41337
+!SESSION 2025-09-23 16:13:59.863 -----------------------------------------------
+eclipse.buildId=Version 1.19.0
+java.version=21.0.3
+java.vendor=Eclipse Adoptium
+BootLoader constants: OS=macosx, ARCH=x86_64, WS=cocoa, NL=en_SG
+Framework arguments:  -keyring /Users/dylan/.eclipse_keyring
+Command-line arguments:  -os macosx -ws cocoa -arch x86_64 -keyring /Users/dylan/.eclipse_keyring
+
+!ENTRY com.st.stm32cube.ide.mcu.informationcenter 1 1 2025-09-23 16:14:20.669
+!MESSAGE Log4j2 initialized with config file /Users/dylan/Desktop/NTU/SC2079/SC2079-MDP-Group-19/stm/.metadata/.log4j2.xml
+
+!ENTRY com.st.stm32cube.ide.mcu.ide 1 1 2025-09-23 16:14:32.842
+!MESSAGE Started RMI Server, listening on port 41337
+!SESSION 2025-09-23 16:35:22.550 -----------------------------------------------
+eclipse.buildId=Version 1.19.0
+java.version=21.0.3
+java.vendor=Eclipse Adoptium
+BootLoader constants: OS=macosx, ARCH=x86_64, WS=cocoa, NL=en_SG
+Framework arguments:  -keyring /Users/dylan/.eclipse_keyring
+Command-line arguments:  -os macosx -ws cocoa -arch x86_64 -keyring /Users/dylan/.eclipse_keyring
+
+!ENTRY com.st.stm32cube.ide.mcu.informationcenter 1 1 2025-09-23 16:36:01.510
+!MESSAGE Log4j2 initialized with config file /Users/dylan/Desktop/NTU/SC2079/SC2079-MDP-Group-19/stm/.metadata/.log4j2.xml
+
+!ENTRY com.st.stm32cube.ide.mcu.ide 1 1 2025-09-23 16:36:13.429
+!MESSAGE Started RMI Server, listening on port 41337

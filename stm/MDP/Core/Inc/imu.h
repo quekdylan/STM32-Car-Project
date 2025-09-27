@@ -36,4 +36,14 @@ int imu_read_temperature_c(float *temp_c);
 // Read magnetometer heading (degrees 0-359) using raw mag X/Y; returns 0 on success, non-zero on failure.
 int imu_read_mag_heading_deg(float *heading_deg);
 
+// Get current gyro bias in deg/s
+float imu_get_gyro_bias(void);
+
+// Manually set gyro bias (useful for known drift measurements)
+void imu_set_gyro_bias(float bias_dps);
+
+// Gyro scale factor functions
+float imu_get_scale_factor(void);
+void imu_set_scale_factor(float scale);
+
 #endif /* INC_IMU_H_ */

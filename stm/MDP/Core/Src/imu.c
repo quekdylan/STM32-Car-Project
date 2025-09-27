@@ -1,5 +1,6 @@
 #include "imu.h"
 #include "ICM20948.h"
+#include "main.h"
 #include <math.h>
 #include <float.h>
 
@@ -11,6 +12,9 @@ static uint8_t  s_addrSel     = 0;     // 0 => 0x68, 1 => 0x69
 static float    s_yaw_deg     = 0.0f;  // integrated heading (deg, wrapped to [-180,180])
 static float    s_gyro_bias_z = 0.0f;  // bias in deg/s (for Z axis)
 static uint8_t  s_mag_ready   = 0;     // magnetometer enabled flag
+
+// Gyro scale factor
+static float    s_scale_factor = 1.0f; // gyro scale factor (k)
 
 typedef struct {
     float min_x;
@@ -46,6 +50,19 @@ static inline float wrap180(float a){
 // -----------------------
 // Bias calibration @ 2000 dps
 // -----------------------
+// This function measures the gyro's zero-rate bias by taking 1000 samples
+// over 2 seconds while the robot is stationary. The average of these readings
+// represents the gyro's drift rate in deg/s.
+//
+// HOW IT WORKS:
+// 1. Takes 1000 samples at 2ms intervals (total: 2000ms)
+// 2. Reads raw gyro Z values at 2000 dps scale
+// 3. Converts raw values to deg/s: gz_dps = raw_value / 16.4
+// 4. Calculates average: bias = sum_of_readings / 1000
+// 5. Result: The gyro's drift rate in deg/s
+//
+// NOTE: This automatic calibration may not be as accurate as manually
+// measured drift values, which is why we use a fixed optimized value (0.43)
 static void imu_calibrate_bias_(void){
     // ~2 second of samples at ~1000 * 2ms = ~2000ms
     const int N = 1000;
@@ -83,9 +100,9 @@ void imu_init(I2C_HandleTypeDef *hi2c, uint8_t *out_addrSel){
     // Configure IMU with 2000 dps full-scale
     ICM20948_init(hi2c, s_addrSel, GYRO_FULL_SCALE_2000DPS);
 
-    // Delay bias calibration until the user explicitly requests it so the
-    // robot can sit idle on the start screen. Default to zero bias for now.
-    s_gyro_bias_z = 0.0f;
+    // Set optimized gyro bias based on measured drift performance
+    // This eliminates the need for manual calibration during startup
+    s_gyro_bias_z = 0.43f;  // Optimized bias for minimal drift (deg/s)
     s_yaw_deg = 0.0f;
 
     // Enable magnetometer (non-fatal if fails)
@@ -209,6 +226,26 @@ void imu_update_yaw_100Hz(void){
         yaw_rate_dps = 0.0f;
     }
 
-    // Integrate: yaw[k+1] = yaw[k] + rate * dt
-    s_yaw_deg = wrap180(s_yaw_deg + yaw_rate_dps * IMU_DT_S);
+    // Integrate: yaw[k+1] = yaw[k] + rate * dt * scale_factor
+    s_yaw_deg = wrap180(s_yaw_deg + yaw_rate_dps * IMU_DT_S * s_scale_factor);
+}
+
+// Get current gyro bias in deg/s
+float imu_get_gyro_bias(void){
+    return s_gyro_bias_z;
+}
+
+// Manually set gyro bias (useful for known drift measurements)
+void imu_set_gyro_bias(float bias_dps){
+    s_gyro_bias_z = bias_dps;
+}
+
+// Get current scale factor
+float imu_get_scale_factor(void){
+    return s_scale_factor;
+}
+
+// Set scale factor
+void imu_set_scale_factor(float scale){
+    s_scale_factor = scale;
 }
