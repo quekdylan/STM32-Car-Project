@@ -8,7 +8,6 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 
-import com.mdp19.forever19.Facing;
 import com.mdp19.forever19.R;
 
 
@@ -29,10 +28,10 @@ public class RobotView extends View {
 
     private void init() {
         // Load the robot PNG from resources
-        robotFacingNorth = BitmapFactory.decodeResource(getResources(), R.drawable.annie_face_up);
-        robotFacingEast = BitmapFactory.decodeResource(getResources(), R.drawable.annie_face_right);
-        robotFacingSouth = BitmapFactory.decodeResource(getResources(), R.drawable.annie_face_down);
-        robotFacingWest = BitmapFactory.decodeResource(getResources(), R.drawable.annie_face_left);
+        robotFacingNorth = BitmapFactory.decodeResource(getResources(), R.drawable.robot_face_up);
+        robotFacingEast = BitmapFactory.decodeResource(getResources(), R.drawable.robot_face_right);
+        robotFacingSouth = BitmapFactory.decodeResource(getResources(), R.drawable.robot_face_down);
+        robotFacingWest = BitmapFactory.decodeResource(getResources(), R.drawable.robot_face_left);
     }
 
     @Override
