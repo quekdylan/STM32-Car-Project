@@ -7,6 +7,7 @@ import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothServerSocket;
 import android.bluetooth.BluetoothSocket;
 import android.content.Context;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -69,9 +70,15 @@ public class BluetoothInterface {
         connectionLock.lock();
         try {
             if (btConnection != null)
-                btConnection.cancel();
-            btConnection = new BluetoothConnection(context, socket, device);
-            btConnection.start();
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    btConnection.cancel();
+                }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                btConnection = new BluetoothConnection(context, socket, device);
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                btConnection.start();
+            }
         } finally {
             connectionLock.unlock();
         }

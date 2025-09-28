@@ -3,7 +3,10 @@ package com.mdp19.forever19.bluetooth;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.os.Build;
 import android.util.Log;
+
+import androidx.annotation.RequiresApi;
 
 import java.util.Objects;
 import java.util.function.Consumer;
@@ -12,6 +15,7 @@ import java.util.function.Consumer;
  * Class used to listen to bluetooth messages "globally".
  * <p> The receiver should be registered on the application's context.
  */
+@RequiresApi(api = Build.VERSION_CODES.S)
 public class BluetoothMessageReceiver extends BroadcastReceiver {
 
     private BluetoothMessageParser parser;

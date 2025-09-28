@@ -5,10 +5,13 @@ import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
 import android.content.Context;
 import android.content.Intent;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.widget.Toast;
+
+import androidx.annotation.RequiresApi;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -20,6 +23,7 @@ import java.nio.charset.StandardCharsets;
  * <p> Note that the messages are assumed to be strings.
  * <p> Reference: <a href="https://developer.android.com/develop/connectivity/bluetooth/transfer-data">Transferring data over BT</a>
  */
+@RequiresApi(api = Build.VERSION_CODES.S)
 public class BluetoothConnection {
     private static final String TAG = "BluetoothConnection";
 

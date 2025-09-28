@@ -3,6 +3,7 @@ package com.mdp19.forever19;
 import android.content.BroadcastReceiver;
 import android.content.IntentFilter;
 import android.media.MediaPlayer;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.ImageButton;
@@ -34,15 +35,23 @@ public class RedButtonActivity extends AppCompatActivity {
 
         myApp = (MyApplication) getApplication();
 
-        msgReceiver = new BluetoothMessageReceiver(BluetoothMessageParser.ofDefault(), this::onMsgReceived);
-        getApplicationContext().registerReceiver(msgReceiver, new IntentFilter(BluetoothMessageReceiver.ACTION_MSG_READ), RECEIVER_NOT_EXPORTED);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            msgReceiver = new BluetoothMessageReceiver(BluetoothMessageParser.ofDefault(), this::onMsgReceived);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                getApplicationContext().registerReceiver(msgReceiver, new IntentFilter(BluetoothMessageReceiver.ACTION_MSG_READ), RECEIVER_NOT_EXPORTED);
+            }
+        }
 
         bigRedBtn = (ImageButton) findViewById(R.id.bigRedBtn);
         bigRedBtn.setEnabled(false); // need 2FA for pressing :)
         bigRedBtn.setOnClickListener(view -> {
             if (myApp.btConnection() != null){
                 BluetoothMessage msg = BluetoothMessage.ofRobotStartMessage();
-                myApp.btConnection().sendMessage(msg.getAsJsonMessage().getAsJson());
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    myApp.btConnection().sendMessage(msg.getAsJsonMessage().getAsJson());
+                }
                 if (mediaPlayer != null) {
                     mediaPlayer.stop();
                     mediaPlayer.release();
