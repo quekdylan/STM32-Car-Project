@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.mdpapp"
+    namespace = "com.mdp19.forever19"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.mdpapp"
+        applicationId = "com.mdp19.forever19"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
@@ -26,8 +26,8 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 }
 

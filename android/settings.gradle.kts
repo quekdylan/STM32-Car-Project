@@ -19,5 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "MDPApp"
+rootProject.name = "My Application"
 include(":app")
+ 
