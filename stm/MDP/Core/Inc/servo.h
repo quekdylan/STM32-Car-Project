@@ -67,9 +67,9 @@ static inline uint32_t Servo_US2CCR(const Servo *s, uint16_t us) {
     return (uint32_t)(c + 0.5f);
 }
 
-#define SERVO_LEFT_LIMIT_US   1084U
+#define SERVO_LEFT_LIMIT_US   1112U
 #define SERVO_CENTER_US       1508U
-#define SERVO_RIGHT_LIMIT_US  2690U
+#define SERVO_RIGHT_LIMIT_US  2176U
 
 #ifdef __cplusplus
 }

@@ -40,10 +40,9 @@
 #include "imu.h"
 /* USER CODE END Includes */
 
-#define UART_CMD_BUF_SIZE 32
-
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+#define UART_CMD_BUF_SIZE 64U
 
 /* USER CODE END PTD */
 
@@ -91,12 +90,13 @@ const osThreadAttr_t oledTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
-/* Definitions for commandQueue */
-osMessageQueueId_t commandQueueHandle;
-const osMessageQueueAttr_t commandQueue_attributes = {
-  .name = "commandQueue"
+/* Definitions for UART_task */
+osThreadId_t UART_taskHandle;
+const osThreadAttr_t UART_task_attributes = {
+  .name = "UART_task",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityLow,
 };
-
 /* USER CODE BEGIN PV */
 // Global servo object for use by defaultTask
 Servo global_steer;
@@ -138,6 +138,23 @@ typedef struct {
   char opcode;        // 'F','B','R','L','r','l','Q'
 } command_msg_t;
 
+osMessageQueueId_t commandQueueHandle;
+const osMessageQueueAttr_t commandQueue_attributes = {
+  .name = "commandQueue"
+};
+
+#define GYRO_LOG_PERIOD_MS 1000U
+
+typedef struct {
+  uint8_t have_prev_sample;
+  float   yaw_unwrapped_deg;
+  float   prev_yaw_deg;
+} gyro_log_state_t;
+
+static gyro_log_state_t g_gyro_log = {0};
+
+
+
 
 
 /* USER CODE END PV */
@@ -157,11 +174,30 @@ static void MX_TIM12_Init(void);
 void StartDefaultTask(void *argument);
 void control_task(void *argument);
 void oled_task(void *argument);
+void uart_task(void *argument);
 
 /* USER CODE BEGIN PFP */
 static void uart_process_command(const char *cmd);
 static void execute_straight_move(float distance_cm, uint32_t brake_ms);
-static void execute_turn_move(char turn_opcode, uint32_t brake_ms);
+static void execute_turn_move(char turn_opcode, float angle_deg, uint32_t brake_ms);
+static void configure_servo_for_motion(void);
+static void wait_for_user_start_button(void);
+static void perform_initial_calibration(void);
+typedef struct {
+  char opcode;
+  int param;
+} scripted_move_t;
+
+#define MAX_SCRIPT_STEPS 16U
+#define SCRIPT_DEFAULT_BRAKE_MS 50U
+
+// Edit this string to change the scripted sequence executed after calibration.
+static char g_instruction_plan[] = "[['L', 90],['R', 90]]";
+
+static int opcode_is_combinable(char opcode);
+static size_t coalesce_instruction_plan(scripted_move_t *steps, size_t count);
+static size_t parse_instruction_plan(scripted_move_t *steps, size_t max_steps);
+static void run_instruction_plan(void);
 
 /* USER CODE END PFP */
 
@@ -208,6 +244,191 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
   }
 }
 
+static size_t parse_instruction_plan(scripted_move_t *steps, size_t max_steps)
+{
+  size_t count = 0U;
+  const char *cursor = g_instruction_plan;
+
+  while (*cursor != '\0' && count < max_steps) {
+    while (*cursor != '\0' && *cursor != '\'' && *cursor != '"') {
+      cursor++;
+    }
+
+    if (*cursor == '\0' || cursor[1] == '\0') {
+      break;
+    }
+
+    char quote_char = *cursor;
+    char opcode = cursor[1];
+    const char *closing = strchr(cursor + 2, quote_char);
+    if (!closing) {
+      break;
+    }
+
+    const char *num_start = closing + 1;
+    while (*num_start != '\0' && *num_start != '-' && !isdigit((unsigned char)*num_start)) {
+      if (*num_start == '[') {
+        break;
+      }
+      num_start++;
+    }
+
+    if (*num_start == '\0' || *num_start == '[') {
+      cursor = closing + 1;
+      continue;
+    }
+
+    char *end_ptr = NULL;
+    long value = strtol(num_start, &end_ptr, 10);
+    if (end_ptr == num_start) {
+      cursor = closing + 1;
+      continue;
+    }
+
+    steps[count].opcode = opcode;
+    steps[count].param = (int)value;
+    count++;
+    cursor = end_ptr;
+  }
+
+  return count;
+}
+
+static int opcode_is_combinable(char opcode)
+{
+  switch (opcode) {
+    case 'S':
+    case 's':
+    case 'L':
+    case 'R':
+    case 'l':
+    case 'r':
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+static size_t coalesce_instruction_plan(scripted_move_t *steps, size_t count)
+{
+  if (!steps || count == 0U) {
+    return 0U;
+  }
+
+  size_t write = 0U;
+  for (size_t read = 0U; read < count; ++read) {
+    if (write > 0U) {
+      scripted_move_t *prev = &steps[write - 1U];
+      scripted_move_t *curr = &steps[read];
+      if (curr->opcode == prev->opcode && opcode_is_combinable(curr->opcode)) {
+        long combined = (long)prev->param + (long)curr->param;
+        if (combined > (long)INT_MAX) {
+          combined = (long)INT_MAX;
+        } else if (combined < (long)INT_MIN) {
+          combined = (long)INT_MIN;
+        }
+        prev->param = (int)combined;
+        continue;
+      }
+    }
+
+    if (write != read) {
+      steps[write] = steps[read];
+    }
+    write++;
+  }
+
+  return write;
+}
+
+static void configure_servo_for_motion(void)
+{
+  uint32_t pclk2 = HAL_RCC_GetPCLK2Freq();
+  uint32_t timclk = pclk2; // APB2 prescaler = 1
+  float tick_us = ((float)(htim8.Init.Prescaler + 1U)) * (1000000.0f / (float)timclk);
+
+  Servo_Attach(&global_steer, &htim8, TIM_CHANNEL_1, tick_us,
+               SERVO_LEFT_LIMIT_US, SERVO_CENTER_US, SERVO_RIGHT_LIMIT_US);
+
+  if (Servo_Start(&global_steer) != HAL_OK) {
+    for(;;) { osDelay(1000); }
+  }
+
+  Servo_Center(&global_steer);
+}
+
+static void wait_for_user_start_button(void)
+{
+  g_user_start_requested = 0;
+  uint8_t prev_pressed = user_is_pressed();
+
+  while (!g_user_start_requested) {
+    uint8_t pressed = user_is_pressed();
+    if (!prev_pressed && pressed) {
+      g_user_start_requested = 1;
+    }
+    prev_pressed = pressed;
+    osDelay(10);
+  }
+}
+
+static void perform_initial_calibration(void)
+{
+  g_is_calibrating = 1;
+  osDelay(1000);
+  motor_stop();
+  imu_calibrate_bias_(1000);
+  imu_zero_yaw();
+  g_is_calibrating = 0;
+
+  g_gyro_log.yaw_unwrapped_deg = 0.0f;
+  g_gyro_log.prev_yaw_deg = 0.0f;
+  g_gyro_log.have_prev_sample = 0U;
+}
+
+static void reset_motion_state(void)
+{
+  Servo_Center(&global_steer);
+  control_set_target_ticks_per_dt(0, 0);
+  motor_stop();
+  g_current_instr = 0;
+}
+
+static void run_instruction_plan(void)
+{
+  scripted_move_t steps[MAX_SCRIPT_STEPS];
+  size_t step_count = parse_instruction_plan(steps, MAX_SCRIPT_STEPS);
+  step_count = coalesce_instruction_plan(steps, step_count);
+
+  for (size_t i = 0; i < step_count; ++i) {
+    char opcode = steps[i].opcode;
+    int param = steps[i].param;
+
+    if (opcode == 'S' || opcode == 's') {
+      float distance_cm = (opcode == 's') ? -fabsf((float)param) : fabsf((float)param);
+      char dbg[48];
+      (void)snprintf(dbg, sizeof(dbg), "script %c %d\r\n", opcode, param);
+      uart_send_response(dbg);
+      execute_straight_move(distance_cm, SCRIPT_DEFAULT_BRAKE_MS);
+    } else if (opcode == 'L' || opcode == 'R' || opcode == 'l' || opcode == 'r') {
+      float angle_deg = fabsf((float)param);
+      if (angle_deg <= 0.0f) {
+        angle_deg = 90.0f;
+      }
+      char dbg[48];
+      (void)snprintf(dbg, sizeof(dbg), "script turn %c %d\r\n", opcode, (int)angle_deg);
+      uart_send_response(dbg);
+      execute_turn_move(opcode, angle_deg, SCRIPT_DEFAULT_BRAKE_MS);
+    } else {
+      continue;
+    }
+
+    Servo_Center(&global_steer);
+    motor_stop();
+    osDelay(20);
+  }
+}
+
 static void execute_straight_move(float distance_cm, uint32_t brake_ms)
 {
   if (distance_cm == 0.0f) {
@@ -225,10 +446,10 @@ static void execute_straight_move(float distance_cm, uint32_t brake_ms)
   motor_stop();
 }
 
-static void execute_turn_move(char turn_opcode, uint32_t brake_ms)
+static void execute_turn_move(char turn_opcode, float angle_deg, uint32_t brake_ms)
 {
   g_current_instr = turn_opcode;
-  move_start_fast_turn(turn_opcode);
+  move_turn(turn_opcode, angle_deg);
   while (move_is_active()) {
     osDelay(5);
   }
@@ -288,6 +509,10 @@ ultrasonic_init(&htim12, GPIOB, GPIO_PIN_15);
 uint8_t icm_addrSel = 0;
 imu_init(&hi2c2, &icm_addrSel);
 
+  g_gyro_log.yaw_unwrapped_deg = 0.0f;
+  g_gyro_log.prev_yaw_deg = 0.0f;
+  g_gyro_log.have_prev_sample = 0U;
+
 // Arm first RX
 HAL_UART_Receive_IT(&huart3, &uart3_rx_byte, 1);
 
@@ -331,6 +556,9 @@ HAL_UART_Transmit(&huart3, (uint8_t*)hello, strlen(hello), HAL_MAX_DELAY);
 
   /* creation of oledTask */
   oledTaskHandle = osThreadNew(oled_task, NULL, &oledTask_attributes);
+
+  /* creation of UART_task */
+  UART_taskHandle = osThreadNew(uart_task, NULL, &UART_task_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -875,7 +1103,6 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(trigger_pin_GPIO_Port, trigger_pin_Pin, GPIO_PIN_RESET);
@@ -903,13 +1130,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PB15 (Ultrasonic Trigger) */
-  GPIO_InitStruct.Pin = GPIO_PIN_15;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pin : USER_BUTTON_Pin */
   GPIO_InitStruct.Pin = USER_BUTTON_Pin;
@@ -1128,70 +1348,12 @@ static void uart_process_command(const char *cmd)
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
-  // Initialize servo on TIM8 CH1. Compute tick_us from current timer clock and prescaler.
-  {
-    uint32_t pclk2 = HAL_RCC_GetPCLK2Freq();
-    uint32_t timclk = pclk2; // APB2 prescaler = 1
-    float tick_us = ((float)(htim8.Init.Prescaler + 1U)) * (1000000.0f / (float)timclk);
-    // Example with HSI=16MHz, APB2=16MHz, PSC=319 => tick_us ~ 20.0, ARR=999 => 50 Hz PWM
-
-  // L/R Turn radius at 100% ~ 25-30cm
-  // Servo calibration: SERVO_LEFT_LIMIT_US..SERVO_RIGHT_LIMIT_US
-  Servo_Attach(&global_steer, &htim8, TIM_CHANNEL_1, tick_us,
-               SERVO_LEFT_LIMIT_US, SERVO_CENTER_US, SERVO_RIGHT_LIMIT_US);
-  }
-
-  if (Servo_Start(&global_steer) != HAL_OK) {
-    for(;;) { osDelay(1000); }
-  }
-  
-  // Center servo to perfect alignment position
-  Servo_Center(&global_steer);
-
-  // Wait for the user button before starting motion commands.
-  g_user_start_requested = 0;
-  uint8_t prev_pressed = user_is_pressed();
-  while (!g_user_start_requested) {
-    uint8_t pressed = user_is_pressed();
-    if (!prev_pressed && pressed) {
-      g_user_start_requested = 1;
-    }
-    prev_pressed = pressed;
-    osDelay(10);
-  }
-
-  // Give the operator a short buffer, then zero the yaw for the run
-  g_is_calibrating = 1;
-  osDelay(1000);
-  motor_stop();
-  
-  // Gyro bias is now automatically set during IMU initialization (0.43 deg/s)
-  // Just zero the yaw for the current run
-  imu_zero_yaw();
-  g_is_calibrating = 0;
-
-  Servo_Center(&global_steer);
-  control_set_target_ticks_per_dt(0, 0);
-  motor_stop();
-  g_current_instr = 0;
-
-  // First press: 90° left turn
-  execute_turn_move('L', 50);
-
-  // Wait for a second button press to trigger the return rotation.
-  g_user_start_requested = 0;
-  prev_pressed = user_is_pressed();
-  while (!g_user_start_requested) {
-    uint8_t pressed = user_is_pressed();
-    if (!prev_pressed && pressed) {
-      g_user_start_requested = 1;
-    }
-    prev_pressed = pressed;
-    osDelay(10);
-  }
-
-  // Second press: 90° right turn
-  execute_turn_move('R', 50);
+  configure_servo_for_motion();
+  wait_for_user_start_button();
+  perform_initial_calibration();
+  reset_motion_state();
+  run_instruction_plan();
+  reset_motion_state();
 
   for(;;) {
     command_msg_t msg;
@@ -1222,7 +1384,7 @@ void StartDefaultTask(void *argument)
       char dbg[24];
       (void)snprintf(dbg, sizeof(dbg), "exec turn %c\r\n", msg.opcode);
       uart_send_response(dbg);
-      move_start_fast_turn(msg.opcode);
+      move_turn(msg.opcode, 90.0f);
       while (move_is_active()) {
         osDelay(5);
       }
@@ -1355,6 +1517,24 @@ void oled_task(void *argument)
     osDelay(5);
   }
   /* USER CODE END oled_task */
+}
+
+/* USER CODE BEGIN Header_uart_task */
+/**
+* @brief Function implementing the UART_task thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_uart_task */
+void uart_task(void *argument)
+{
+  /* USER CODE BEGIN uart_task */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END uart_task */
 }
 
 /**

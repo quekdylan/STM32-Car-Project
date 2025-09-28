@@ -70,8 +70,8 @@ all: main-build
 main-build: MDP.elf secondary-outputs
 
 # Tool invocations
-MDP.elf MDP.map: $(OBJS) $(USER_OBJS) /Users/karthikadharsh/Library/CloudStorage/OneDrive-NanyangTechnologicalUniversity/NTU/Year4/MDP-2/SC2079-MDP-Group-19/stm/MDP/STM32F407VETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "MDP.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/Users/karthikadharsh/Library/CloudStorage/OneDrive-NanyangTechnologicalUniversity/NTU/Year4/MDP-2/SC2079-MDP-Group-19/stm/MDP/STM32F407VETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="MDP.map" -Wl,--gc-sections -static -u _printf_float --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+MDP.elf MDP.map: $(OBJS) $(USER_OBJS) /Users/dylan/Desktop/NTU/SC2079/SC2079-MDP-Group-19/stm/MDP/STM32F407VETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "MDP.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/Users/dylan/Desktop/NTU/SC2079/SC2079-MDP-Group-19/stm/MDP/STM32F407VETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="MDP.map" -Wl,--gc-sections -static -u _printf_float --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
