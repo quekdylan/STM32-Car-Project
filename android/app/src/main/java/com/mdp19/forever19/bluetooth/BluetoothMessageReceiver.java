@@ -15,7 +15,6 @@ import java.util.function.Consumer;
  * Class used to listen to bluetooth messages "globally".
  * <p> The receiver should be registered on the application's context.
  */
-@RequiresApi(api = Build.VERSION_CODES.S)
 public class BluetoothMessageReceiver extends BroadcastReceiver {
 
     private BluetoothMessageParser parser;

@@ -72,14 +72,8 @@ public class CanvasActivity extends AppCompatActivity {
 
         bindUI(); // Calls method to initialize UI components
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            msgReceiver = new BluetoothMessageReceiver(BluetoothMessageParser.ofDefault(), this::onMsgReceived);
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                getApplicationContext().registerReceiver(msgReceiver, new IntentFilter(BluetoothMessageReceiver.ACTION_MSG_READ), RECEIVER_NOT_EXPORTED);
-            }
-        }
+        msgReceiver = new BluetoothMessageReceiver(BluetoothMessageParser.ofDefault(), this::onMsgReceived);
+        getApplicationContext().registerReceiver(msgReceiver, new IntentFilter(BluetoothMessageReceiver.ACTION_MSG_READ), RECEIVER_NOT_EXPORTED);
     }
 
     @Override
@@ -152,9 +146,7 @@ public class CanvasActivity extends AppCompatActivity {
 
     private void startRobot() {
         BluetoothMessage msg = BluetoothMessage.ofRobotStartMessage();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            myApp.btConnection().sendMessage(msg.getAsJsonMessage().getAsJson());
-        }
+        myApp.btConnection().sendMessage(msg.getAsJsonMessage().getAsJson());
         if (mediaPlayer != null) {
             mediaPlayer.stop();
             mediaPlayer.release();
@@ -184,9 +176,7 @@ public class CanvasActivity extends AppCompatActivity {
         BluetoothMessage msg = BluetoothMessage.ofObstaclesMessage(myApp.robot().getPosition(),
                 this.myApp.robot().getFacing(),
                 this.myApp.grid().getObstacleList());
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            myApp.btConnection().sendMessage(msg.getAsJsonMessage().getAsJson());
-        }
+        myApp.btConnection().sendMessage(msg.getAsJsonMessage().getAsJson());
         Toast.makeText(CanvasActivity.this, "Data sent successfully", Toast.LENGTH_SHORT).show();
         if (mediaPlayer != null) {
             mediaPlayer.stop();
@@ -237,9 +227,7 @@ public class CanvasActivity extends AppCompatActivity {
         String message = chatInputBox.getText().toString().trim();
 
         if (!message.isEmpty()) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                myApp.btConnection().sendMessage(message); // Send the message via Bluetooth
-            }
+            myApp.btConnection().sendMessage(message); // Send the message via Bluetooth
             chatInputBox.setText(""); // Clear the input field after sending
             Toast.makeText(this, "Message sent: " + message, Toast.LENGTH_SHORT).show();
         } else {

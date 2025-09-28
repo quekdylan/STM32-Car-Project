@@ -10,8 +10,7 @@ public enum Facing {
     WEST(6),
     SKIP(8);
 
-    private int mappedCode;
-
+private int mappedCode;
     Facing(int code) {
         mappedCode = code;
     }

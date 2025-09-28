@@ -102,27 +102,15 @@ public class BluetoothActivity extends AppCompatActivity {
                 });
 
         // register broadcast receivers for bluetooth context
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            infoReceiver = new BluetoothInfoReceiver(this::onBluetoothInfoReceived);
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            for (IntentFilter intentFilter : BluetoothInfoReceiver.DEFAULT_FILTERS) {
-                // note: needs to be RECEIVER_EXPORTED for scan mode change to be broadcast, not sure why
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    getApplicationContext().registerReceiver(infoReceiver, intentFilter, RECEIVER_EXPORTED);
-                }
-            }
+        infoReceiver = new BluetoothInfoReceiver(this::onBluetoothInfoReceived);
+        for (IntentFilter intentFilter : BluetoothInfoReceiver.DEFAULT_FILTERS) {
+            // note: needs to be RECEIVER_EXPORTED for scan mode change to be broadcast, not sure why
+            getApplicationContext().registerReceiver(infoReceiver, intentFilter, RECEIVER_EXPORTED);
         }
 
         // register message receiver
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            msgReceiver = new BluetoothMessageReceiver(BluetoothMessageParser.ofDefault(), this::onMsgReceived);
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                getApplicationContext().registerReceiver(msgReceiver, new IntentFilter(BluetoothMessageReceiver.ACTION_MSG_READ), RECEIVER_NOT_EXPORTED);
-            }
-        }
+        msgReceiver = new BluetoothMessageReceiver(BluetoothMessageParser.ofDefault(), this::onMsgReceived);
+        getApplicationContext().registerReceiver(msgReceiver, new IntentFilter(BluetoothMessageReceiver.ACTION_MSG_READ), RECEIVER_NOT_EXPORTED);
 
         LocationManager locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
         boolean isGpsEnabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER);
@@ -246,42 +234,34 @@ public class BluetoothActivity extends AppCompatActivity {
         Log.d(TAG, "Received action: " + action);
         if (action.equals(BluetoothDevice.ACTION_FOUND)) {
             // discovered a bluetooth device
-            BluetoothDevice device = null;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice.class);
-            }
+            BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice.class);
             if (device != null) {
                 String deviceName = device.getName();
                 String deviceHardwareAddress = device.getAddress(); // MAC address
                 Log.d(TAG, "Discovered " + deviceName + " (" + deviceHardwareAddress + ")");
                 bluetoothDeviceAdapter.addDiscoveredDevice(device);
             }
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (action.equals(BluetoothConnection.ACTION_CONNECTED)) {
-                boolean connected = intent.getBooleanExtra(BluetoothConnection.EXTRA_CONNECTED, false);
-                BluetoothDevice device = null;
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    device = intent.getParcelableExtra(BluetoothConnection.EXTRA_DEVICE, BluetoothDevice.class);
-                }
-                if (device != null) {
-                    Log.d(TAG, "Connected to " + device.getName() + ": " + connected);
-                    if (!connected) {
-                        // let other device reconnect
-                        // enableDeviceDiscovery();
-                        // and also initiate reconnection
-                        Toast.makeText(this, "Reconnecting to " + device.getName(), Toast.LENGTH_SHORT).show();
-                        myApp.btInterface().connectAsClient(device);
-                    } else {
-                        // connection successful
-                        if (!btConnectedSfx.isPlaying()) {
-                            btConnectedSfx.start();
-                        }
-                        connectedText.setText("Connected to " + device.getName());
+        } else if (action.equals(BluetoothConnection.ACTION_CONNECTED)) {
+            boolean connected = intent.getBooleanExtra(BluetoothConnection.EXTRA_CONNECTED, false);
+            BluetoothDevice device = intent.getParcelableExtra(BluetoothConnection.EXTRA_DEVICE, BluetoothDevice.class);
+            if (device != null) {
+                Log.d(TAG, "Connected to " + device.getName() + ": " + connected);
+                if (!connected) {
+                    // let other device reconnect
+                    // enableDeviceDiscovery();
+                    // and also initiate reconnection
+                    Toast.makeText(this, "Reconnecting to " + device.getName(), Toast.LENGTH_SHORT).show();
+                    myApp.btInterface().connectAsClient(device);
+                } else {
+                    // connection successful
+                    if (!btConnectedSfx.isPlaying()) {
+                        btConnectedSfx.start();
                     }
-                    connectedPanel.setVisibility(connected ? View.VISIBLE : View.INVISIBLE);
-                    // refresh the device list
-                    refreshDeviceList();
+                    connectedText.setText("Connected to " + device.getName());
                 }
+                connectedPanel.setVisibility(connected ? View.VISIBLE : View.INVISIBLE);
+                // refresh the device list
+                refreshDeviceList();
             }
         }
     }

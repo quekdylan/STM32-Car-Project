@@ -15,7 +15,6 @@ import androidx.annotation.RequiresApi;
 
 import java.util.function.BiConsumer;
 
-@RequiresApi(api = Build.VERSION_CODES.S)
 public class BluetoothInfoReceiver extends BroadcastReceiver {
 
 
@@ -62,10 +61,7 @@ public class BluetoothInfoReceiver extends BroadcastReceiver {
                 }
             }
             case BluetoothDevice.ACTION_BOND_STATE_CHANGED -> {
-                BluetoothDevice device = null;
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice.class);
-                }
+                BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice.class);
                 if (device != null) {
                     switch (device.getBondState()) {
                         case BluetoothDevice.BOND_NONE -> {
@@ -84,10 +80,7 @@ public class BluetoothInfoReceiver extends BroadcastReceiver {
         // does not fit into switch statement as it is not a "constant expression"
         if (action.equals(BluetoothConnection.ACTION_CONNECTED)) {
             boolean connected = intent.getBooleanExtra(BluetoothConnection.EXTRA_CONNECTED, false);
-            BluetoothDevice device = null;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                device = intent.getParcelableExtra(BluetoothConnection.EXTRA_DEVICE, BluetoothDevice.class);
-            }
+            BluetoothDevice device = intent.getParcelableExtra(BluetoothConnection.EXTRA_DEVICE, BluetoothDevice.class);
             if (device != null) {
                 if (connected) {
                     Toast.makeText(context, "Connected to " + device.getName(), Toast.LENGTH_SHORT).show();

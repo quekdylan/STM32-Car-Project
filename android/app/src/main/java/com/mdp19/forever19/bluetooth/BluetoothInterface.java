@@ -27,7 +27,7 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 public class BluetoothInterface {
     private static final String TAG = "BluetoothInterface";
-    private static final String BT_NAME = "MDP_GRP_19";
+    private static final String BT_NAME = "MDP_GRP_21";
     private static final UUID BT_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB"); // standard SerialPortServiceClass UUID?
 
     private final Context context; //read-only, used by child threads
@@ -70,15 +70,9 @@ public class BluetoothInterface {
         connectionLock.lock();
         try {
             if (btConnection != null)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    btConnection.cancel();
-                }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                btConnection = new BluetoothConnection(context, socket, device);
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                btConnection.start();
-            }
+                btConnection.cancel();
+            btConnection = new BluetoothConnection(context, socket, device);
+            btConnection.start();
         } finally {
             connectionLock.unlock();
         }
