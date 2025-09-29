@@ -36,8 +36,8 @@ static void mag_cal_reset_(void){
     s_mag_cal.have_range = 0;
 }
 
-// 100 Hz update period
-#define IMU_DT_S 0.01f
+// 50 Hz update period when decimated from a 100 Hz caller (20 ms effective)
+#define IMU_DT_S 0.02f
 
 // Small deadband to squash tiny noise (in deg/s) when robot is still
 #define GZ_DEADBAND_DPS  0.4f
@@ -211,8 +211,15 @@ void Gyro_Read_Z(I2C_HandleTypeDef *hi2c, float *gyroZ_dps){
     *gyroZ_dps = gz_dps;
 }
 
-// Call this at 100 Hz (every 10 ms): integrates Z rate into yaw (deg), wraps to [-180,180]
+// Caller runs at 100 Hz, but we decimate to 50 Hz samples for integration
 void imu_update_yaw_100Hz(void){
+    static uint8_t sample_toggle = 0U; // ensure 50 Hz sampling cadence
+
+    sample_toggle ^= 1U;
+    if (sample_toggle == 0U) {
+        return;
+    }
+
     int16_t gz_raw = 0;
 
     // Read raw Z at the configured full-scale

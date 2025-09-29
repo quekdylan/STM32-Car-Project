@@ -20,7 +20,7 @@ static float g_decel_dist_cm = 12.0f; // decelerate over last 12 cm
 // --- Speed Configuration ---
 // Speeds are defined in "encoder ticks per control period (10ms)".
 // You must tune these for your specific robot.
-#define V_MAX_TICKS_PER_DT (30.0f) // Max speed during cruise phase (e.g., 30 ticks / 10ms)
+#define V_MAX_TICKS_PER_DT (40.0f) // Max speed during cruise phase (e.g., 30 ticks / 10ms)
 #define V_MIN_TICKS_PER_DT (3.0f)  // Minimum speed to overcome static friction and ensure smooth start/stop
 
 // --- Yaw Correction ---
@@ -31,8 +31,8 @@ static float g_decel_dist_cm = 12.0f; // decelerate over last 12 cm
 
 // --- Turn Configuration ---
 // Speed for ackermann turns (encoder ticks / 10ms per wheel after scaling).
-#define TURN_BASE_TICKS_PER_DT   (20)     // base speed before inner/outer scaling
-#define TURN_YAW_TARGET_DEG      (90.0f)   // desired turn angle
+#define TURN_BASE_TICKS_PER_DT   (30)     // base speed before inner/outer scaling
+#define TURN_YAW_TARGET_DEG      (90.0f)  // desired turn angle
 #define TURN_YAW_TOLERANCE_DEG   (0.2f)   // acceptable tolerance to stop
 #define TURN_YAW_SLOW_BAND_DEG   (10.0f)  // start slowing when within this band
 #define TURN_MIN_TICKS_PER_DT    (3)      // minimum per-wheel speed while turning
@@ -247,9 +247,8 @@ void move_tick_100Hz(void) {
     // Compute remaining angle to target
     float err = ms.yaw_target_deg - ms.yaw_accum_deg; // degrees remaining
 
-    // If we've crossed the goal or entered tolerance, stop and brake
-    float err_aligned = err * (float)ms.turn_sign;
-    if (fabsf(err) <= TURN_YAW_TOLERANCE_DEG || err_aligned <= 0.0f) {
+    // If within tolerance, stop
+    if (fabsf(err) <= TURN_YAW_TOLERANCE_DEG) {
       ms.active = 0;
       ms.mode = MOVE_IDLE;
       control_set_target_ticks_per_dt(0, 0);
@@ -305,7 +304,7 @@ void move_tick_100Hz(void) {
       } else {
         float R = WHEELBASE_CM / tan_delta;   // turn radius of rear axle centerline
         float rfac = TRACK_WIDTH_CM / (2.0f * fabsf(R)); // >= 0
-        rfac *= 1.9f; // stronger bias for tighter turns
+        rfac *= 1.5f; // stronger bias for tighter turns
         // Clamp to avoid negative inner factor at extreme angles
         if (rfac > 0.9f) rfac = 0.9f;
         float inner = (1.0f - rfac);

@@ -31,6 +31,7 @@
 #include "pid.h"
 #include "movements.h"
 #include "sensor.h"
+#include "commands.h"
 #include <stdio.h>
 #include <string.h>  // for strlen
 #include <math.h>
@@ -43,6 +44,7 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 #define UART_CMD_BUF_SIZE 64U
+#define UART_RING_BUFFER_SIZE 256U
 
 /* USER CODE END PTD */
 
@@ -101,12 +103,9 @@ const osThreadAttr_t UART_task_attributes = {
 // Global servo object for use by defaultTask
 Servo global_steer;
 
-// Current high-level instruction being executed (e.g., 'S','L','R','s','r').
+// Current high-level instruction being executed (e.g., 'T','t','L','R','l','r').
 // 0 means none; shown as '-' on OLED.
 volatile char g_current_instr = 0;
-
-// Latched when the user presses the start button to begin the run sequence.
-volatile uint8_t g_user_start_requested = 0;
 
 // Flag while the IMU is undergoing calibration so the UI can show status.
 volatile uint8_t g_is_calibrating = 0;
@@ -123,25 +122,11 @@ volatile uint16_t g_current_servo_pos = SERVO_CENTER_US;
 volatile uint8_t g_uart_last_char = 0;
 volatile uint8_t g_uart_char_valid = 0;
 
-static char uart3_cmd_buffer[UART_CMD_BUF_SIZE];
-static size_t uart3_cmd_length = 0;
-
-// Sequence execution guard
-typedef enum {
-  CMD_TYPE_MOVE = 0,
-  CMD_TYPE_TURN = 1
-} command_type_t;
-
-typedef struct {
-  command_type_t type;
-  int16_t value_cm;   // for moves
-  char opcode;        // 'F','B','R','L','r','l','Q'
-} command_msg_t;
-
-osMessageQueueId_t commandQueueHandle;
-const osMessageQueueAttr_t commandQueue_attributes = {
-  .name = "commandQueue"
-};
+static uint8_t uart_ring_buffer[UART_RING_BUFFER_SIZE];
+static volatile uint16_t uart_ring_head = 0;
+static volatile uint16_t uart_ring_tail = 0;
+static uint8_t uart_cmd_buffer[UART_CMD_BUF_SIZE];
+static uint16_t uart_cmd_length = 0;
 
 #define GYRO_LOG_PERIOD_MS 1000U
 
@@ -177,12 +162,15 @@ void oled_task(void *argument);
 void uart_task(void *argument);
 
 /* USER CODE BEGIN PFP */
-static void uart_process_command(const char *cmd);
 static void execute_straight_move(float distance_cm, uint32_t brake_ms);
 static void execute_turn_move(char turn_opcode, float angle_deg, uint32_t brake_ms);
 static void configure_servo_for_motion(void);
-static void wait_for_user_start_button(void);
 static void perform_initial_calibration(void);
+static void process_serial_input(void);
+static void execute_command(Command *cmd);
+static void wait_for_motion_completion(void);
+static char determine_turn_opcode(const Command *cmd);
+static uint16_t ring_advance(uint16_t index);
 typedef struct {
   char opcode;
   int param;
@@ -212,24 +200,17 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == USART3)
   {
-    char c = (char)uart3_rx_byte;
+    uint16_t next = ring_advance(uart_ring_head);
+    if (next == uart_ring_tail) {
+      uart_ring_tail = ring_advance(uart_ring_tail);
+    }
 
-    if (c == '\r' || c == '\n') {
-      if (uart3_cmd_length > 0U) {
-        uart3_cmd_buffer[uart3_cmd_length] = '\0';
-        uart_process_command(uart3_cmd_buffer);
-        uart3_cmd_length = 0U;
-      }
-    } else {
-      if (uart3_cmd_length < (UART_CMD_BUF_SIZE - 1U)) {
-        uart3_cmd_buffer[uart3_cmd_length++] = c;
-        if (isprint((unsigned char)c)) {
-          g_uart_last_char = (uint8_t)c;
-          g_uart_char_valid = 1U;
-        }
-      } else {
-        uart3_cmd_length = 0U;
-      }
+    uart_ring_buffer[uart_ring_head] = uart3_rx_byte;
+    uart_ring_head = next;
+
+    if (isprint((unsigned char)uart3_rx_byte)) {
+      g_uart_last_char = (uint8_t)uart3_rx_byte;
+      g_uart_char_valid = 1U;
     }
 
     HAL_UART_Receive_IT(&huart3, &uart3_rx_byte, 1);
@@ -239,7 +220,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == USART3) {
-    uart3_cmd_length = 0U;
+    uart_cmd_length = 0U;
     (void)HAL_UART_Receive_IT(&huart3, &uart3_rx_byte, 1);
   }
 }
@@ -297,8 +278,8 @@ static size_t parse_instruction_plan(scripted_move_t *steps, size_t max_steps)
 static int opcode_is_combinable(char opcode)
 {
   switch (opcode) {
-    case 'S':
-    case 's':
+    case CMD_FORWARD_DIST_TARGET:
+    case CMD_BACKWARD_DIST_TARGET:
     case 'L':
     case 'R':
     case 'l':
@@ -357,27 +338,12 @@ static void configure_servo_for_motion(void)
   Servo_Center(&global_steer);
 }
 
-static void wait_for_user_start_button(void)
-{
-  g_user_start_requested = 0;
-  uint8_t prev_pressed = user_is_pressed();
-
-  while (!g_user_start_requested) {
-    uint8_t pressed = user_is_pressed();
-    if (!prev_pressed && pressed) {
-      g_user_start_requested = 1;
-    }
-    prev_pressed = pressed;
-    osDelay(10);
-  }
-}
-
 static void perform_initial_calibration(void)
 {
   g_is_calibrating = 1;
   osDelay(1000);
   motor_stop();
-  imu_calibrate_bias_(1000);
+  imu_calibrate_bias_blocking(1000);
   imu_zero_yaw();
   g_is_calibrating = 0;
 
@@ -404,8 +370,8 @@ static void run_instruction_plan(void)
     char opcode = steps[i].opcode;
     int param = steps[i].param;
 
-    if (opcode == 'S' || opcode == 's') {
-      float distance_cm = (opcode == 's') ? -fabsf((float)param) : fabsf((float)param);
+    if (opcode == CMD_FORWARD_DIST_TARGET || opcode == CMD_BACKWARD_DIST_TARGET) {
+      float distance_cm = (opcode == CMD_BACKWARD_DIST_TARGET) ? -fabsf((float)param) : fabsf((float)param);
       char dbg[48];
       (void)snprintf(dbg, sizeof(dbg), "script %c %d\r\n", opcode, param);
       uart_send_response(dbg);
@@ -435,11 +401,9 @@ static void execute_straight_move(float distance_cm, uint32_t brake_ms)
     return;
   }
 
-  g_current_instr = (distance_cm >= 0.0f) ? 'S' : 's';
+  g_current_instr = (distance_cm >= 0.0f) ? CMD_FORWARD_DIST_TARGET : CMD_BACKWARD_DIST_TARGET;
   move_start_straight(distance_cm);
-  while (move_is_active()) {
-    osDelay(5);
-  }
+  wait_for_motion_completion();
   g_current_instr = 0;
   control_set_target_ticks_per_dt(0, 0);
   motor_brake_ms(brake_ms);
@@ -450,9 +414,7 @@ static void execute_turn_move(char turn_opcode, float angle_deg, uint32_t brake_
 {
   g_current_instr = turn_opcode;
   move_turn(turn_opcode, angle_deg);
-  while (move_is_active()) {
-    osDelay(5);
-  }
+  wait_for_motion_completion();
   g_current_instr = 0;
   control_set_target_ticks_per_dt(0, 0);
   motor_brake_ms(brake_ms);
@@ -513,6 +475,8 @@ imu_init(&hi2c2, &icm_addrSel);
   g_gyro_log.prev_yaw_deg = 0.0f;
   g_gyro_log.have_prev_sample = 0U;
 
+commands_init();
+
 // Arm first RX
 HAL_UART_Receive_IT(&huart3, &uart3_rx_byte, 1);
 
@@ -541,10 +505,7 @@ HAL_UART_Transmit(&huart3, (uint8_t*)hello, strlen(hello), HAL_MAX_DELAY);
   /* USER CODE END RTOS_TIMERS */
 
   /* USER CODE BEGIN RTOS_QUEUES */
-  commandQueueHandle = osMessageQueueNew(16, sizeof(command_msg_t), &commandQueue_attributes);
-  if (commandQueueHandle == NULL) {
-    Error_Handler();
-  }
+  /* No RTOS queues used */
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -1216,123 +1177,173 @@ static void uart_send_response(const char *msg)
   (void)HAL_UART_Transmit(&huart3, (uint8_t *)msg, (uint16_t)len, 100);
 }
 
-static void uart_process_command(const char *cmd)
+static uint16_t ring_advance(uint16_t index)
+{
+  return (uint16_t)((index + 1U) % UART_RING_BUFFER_SIZE);
+}
+
+static void process_serial_input(void)
+{
+  while (uart_ring_tail != uart_ring_head) {
+    uint8_t byte = uart_ring_buffer[uart_ring_tail];
+    uart_ring_tail = ring_advance(uart_ring_tail);
+
+    if (byte == '\r') {
+      continue;
+    }
+
+    if (uart_cmd_length < UART_CMD_BUF_SIZE) {
+      uart_cmd_buffer[uart_cmd_length++] = byte;
+    } else {
+      uart_cmd_length = 0U;
+      continue;
+    }
+
+    if (byte == CMD_END) {
+      commands_process(&huart3, uart_cmd_buffer, uart_cmd_length);
+      uart_cmd_length = 0U;
+    }
+  }
+}
+
+static void wait_for_motion_completion(void)
+{
+  while (move_is_active()) {
+    osDelay(5);
+    process_serial_input();
+  }
+}
+
+static char determine_turn_opcode(const Command *cmd)
+{
+  if (cmd == NULL) {
+    return 'L';
+  }
+
+  if (cmd->dir < 0) {
+    return (cmd->angleToSteer >= 0.0f) ? 'r' : 'l';
+  }
+
+  return (cmd->angleToSteer >= 0.0f) ? 'R' : 'L';
+}
+
+static char command_display_code(const Command *cmd)
+{
+  if (cmd == NULL) {
+    return 0;
+  }
+
+  switch (cmd->opType) {
+    case COMMAND_OP_STOP:
+      return CMD_FULL_STOP;
+
+    case COMMAND_OP_TURN:
+      return determine_turn_opcode(cmd);
+
+    case COMMAND_OP_DRIVE:
+      switch (cmd->distType) {
+        case COMMAND_DIST_TARGET:
+          return (cmd->dir < 0) ? CMD_BACKWARD_DIST_TARGET : CMD_FORWARD_DIST_TARGET;
+        case COMMAND_DIST_STOP_AWAY:
+          return (cmd->dir < 0) ? CMD_BACKWARD_DIST_AWAY : CMD_FORWARD_DIST_AWAY;
+        case COMMAND_DIST_STOP_L:
+          return CMD_FORWARD_DIST_L;
+        case COMMAND_DIST_STOP_R:
+          return CMD_FORWARD_DIST_R;
+        case COMMAND_DIST_STOP_L_LESS:
+          return CMD_BACKWARD_DIST_L;
+        case COMMAND_DIST_STOP_R_LESS:
+          return CMD_BACKWARD_DIST_R;
+        default:
+          break;
+      }
+      break;
+
+    case COMMAND_OP_INFO_DIST:
+      return CMD_INFO_DIST;
+
+    case COMMAND_OP_INFO_MARKER:
+      return CMD_INFO_MARKER;
+
+    case COMMAND_OP_INVALID:
+    default:
+      break;
+  }
+
+  if (cmd->str && cmd->str_size > 0U) {
+    char flag = (char)cmd->str[0];
+    if (flag != '\0' && flag != CMD_END) {
+      return flag;
+    }
+  }
+
+  return 0;
+}
+
+static void execute_command(Command *cmd)
 {
   if (cmd == NULL) {
     return;
   }
 
-  if (commandQueueHandle == NULL) {
-    uart_send_response("err:init\r\n");
-    return;
-  }
+  char display_code = command_display_code(cmd);
+  g_current_instr = display_code;
 
-  char norm[UART_CMD_BUF_SIZE];
-  size_t norm_len = 0U;
-  size_t raw_len = strlen(cmd);
-  for (size_t i = 0U; i < raw_len && norm_len < (UART_CMD_BUF_SIZE - 1U); ++i) {
-    unsigned char uc = (unsigned char)cmd[i];
-    if (uc == '\r' || uc == '\n') {
-      continue;
-    }
-    if (isspace(uc)) {
-      continue;
-    }
-    norm[norm_len++] = (char)toupper(uc);
-  }
-  norm[norm_len] = '\0';
+  switch (cmd->opType) {
+    case COMMAND_OP_STOP:
+      move_abort();
+      motor_stop();
+      break;
 
-  if (norm_len == 0U) {
-    uart_send_response("err:empty\r\n");
-    return;
-  }
-
-  if (norm_len == 1U) {
-    uart_send_response("err:cmd\r\n");
-    return;
-  }
-
-  if (norm_len >= 2U) {
-    char c0 = norm[0];
-    char c1 = norm[1];
-    if ((c0 == 'F' || c0 == 'B') && (c1 == 'R' || c1 == 'L')) {
-      char turn_cmd;
-      if (c0 == 'F') {
-        turn_cmd = (c1 == 'R') ? 'R' : 'L';
-      } else {
-        turn_cmd = (c1 == 'R') ? 'r' : 'l';
+    case COMMAND_OP_TURN:
+    {
+      char turn_opcode = determine_turn_opcode(cmd);
+      float angle_deg = fabsf(cmd->val);
+      if (angle_deg <= 0.0f) {
+        angle_deg = fabsf(cmd->angleToSteer);
+      }
+      if (angle_deg <= 0.0f) {
+        angle_deg = 90.0f;
       }
 
-      command_msg_t msg = {
-        .type = CMD_TYPE_TURN,
-        .value_cm = 90,
-        .opcode = turn_cmd
-      };
+      move_turn(turn_opcode, angle_deg);
+      wait_for_motion_completion();
+      control_set_target_ticks_per_dt(0, 0);
+      motor_brake_ms(50);
+      motor_stop();
+      break;
+    }
 
-      if (osMessageQueuePut(commandQueueHandle, &msg, 0U, 0U) != osOK) {
-        uart_send_response("err:queue\r\n");
-      } else {
-        char resp[24];
-        (void)snprintf(resp, sizeof(resp), "ok %c%c\r\n", c0, c1);
-        uart_send_response(resp);
+    case COMMAND_OP_DRIVE:
+      if (cmd->distType == COMMAND_DIST_TARGET) {
+        float distance_cm = fabsf(cmd->val);
+        if (distance_cm <= 0.0f) {
+          break;
+        }
+
+        if (cmd->dir < 0) {
+          distance_cm = -distance_cm;
+        }
+
+        move_start_straight(distance_cm);
+        wait_for_motion_completion();
+        control_set_target_ticks_per_dt(0, 0);
+        motor_brake_ms(50);
+        motor_stop();
       }
-      return;
-    }
+      break;
+
+    case COMMAND_OP_INFO_DIST:
+    case COMMAND_OP_INFO_MARKER:
+    case COMMAND_OP_INVALID:
+    default:
+      break;
   }
 
-  char opcode = norm[0];
-  if (opcode != 'F' && opcode != 'B') {
-    uart_send_response("err:cmd\r\n");
-    return;
-  }
-
-  size_t pos = 1U;
-  while (pos < norm_len && norm[pos] == opcode) {
-    pos++;
-  }
-
-  if (pos >= norm_len) {
-    uart_send_response("err:value\r\n");
-    return;
-  }
-
-  char num_buf[12];
-  size_t num_len = 0U;
-  while (pos < norm_len) {
-    char ch = norm[pos];
-    if (!isdigit((unsigned char)ch)) {
-      uart_send_response("err:value\r\n");
-      return;
-    }
-    if (num_len >= sizeof(num_buf) - 1U) {
-      uart_send_response("err:range\r\n");
-      return;
-    }
-    num_buf[num_len++] = ch;
-    pos++;
-  }
-  num_buf[num_len] = '\0';
-
-  long dist = strtol(num_buf, NULL, 10);
-  if (dist <= 0L || dist > 1000L) {
-    uart_send_response("err:range\r\n");
-    return;
-  }
-
-  command_msg_t msg = {
-    .type = CMD_TYPE_MOVE,
-    .value_cm = (int16_t)dist,
-    .opcode = opcode
-  };
-
-  if (osMessageQueuePut(commandQueueHandle, &msg, 0U, 0U) != osOK) {
-    uart_send_response("err:queue\r\n");
-    return;
-  }
-
-  char resp[32];
-  (void)snprintf(resp, sizeof(resp), "ok %c %ld\r\n", opcode, dist);
-  uart_send_response(resp);
+  g_current_instr = 0;
+  Servo_Center(&global_steer);
+  control_set_target_ticks_per_dt(0, 0);
+  motor_stop();
 }
 
 /* USER CODE END PV */
@@ -1349,60 +1360,49 @@ void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
   configure_servo_for_motion();
-  wait_for_user_start_button();
-  perform_initial_calibration();
-  reset_motion_state();
-  run_instruction_plan();
   reset_motion_state();
 
+  uint8_t prev_button_state = user_is_pressed();
+  uint8_t run_plan_pending = 0U;
+  uint8_t did_initial_calibration = 0U;
+
   for(;;) {
-    command_msg_t msg;
-    if (osMessageQueueGet(commandQueueHandle, &msg, NULL, osWaitForever) != osOK) {
+    process_serial_input();
+
+    uint8_t button_state = user_is_pressed();
+    if (!prev_button_state && button_state) {
+      run_plan_pending = 1U;
+    }
+    prev_button_state = button_state;
+
+    if (run_plan_pending && !move_is_active()) {
+      if (!did_initial_calibration) {
+        perform_initial_calibration();
+        reset_motion_state();
+        did_initial_calibration = 1U;
+      }
+
+      run_instruction_plan();
+      reset_motion_state();
+      run_plan_pending = 0U;
       continue;
     }
 
-    if (msg.type == CMD_TYPE_MOVE) {
-      float dist_cm = (msg.opcode == 'B') ? -(float)msg.value_cm : (float)msg.value_cm;
-      g_current_instr = (dist_cm >= 0.0f) ? 'S' : 's';
-      char dbg[32];
-      (void)snprintf(dbg, sizeof(dbg), "exec %c %d\r\n", msg.opcode, (int)msg.value_cm);
-      uart_send_response(dbg);
-      move_start_straight(dist_cm);
-      while (move_is_active()) {
-        osDelay(5);
-      }
-      control_set_target_ticks_per_dt(0, 0);
-      motor_brake_ms(50);
-      motor_stop();
-      Servo_Center(&global_steer);
-      char done_msg[32];
-      char dir = (msg.opcode == 'B') ? 'B' : 'F';
-      (void)snprintf(done_msg, sizeof(done_msg), "done %c %d\r\n", dir, (int)msg.value_cm);
-      uart_send_response(done_msg);
-    } else if (msg.type == CMD_TYPE_TURN) {
-      g_current_instr = msg.opcode;
-      char dbg[24];
-      (void)snprintf(dbg, sizeof(dbg), "exec turn %c\r\n", msg.opcode);
-      uart_send_response(dbg);
-      move_turn(msg.opcode, 90.0f);
-      while (move_is_active()) {
-        osDelay(5);
-      }
-      control_set_target_ticks_per_dt(0, 0);
-      motor_brake_ms(50);
-      motor_stop();
-      Servo_Center(&global_steer);
-      char primary = (msg.opcode == 'r' || msg.opcode == 'l') ? 'B' : 'F';
-      char secondary = (msg.opcode == 'r' || msg.opcode == 'R') ? 'R' : 'L';
-      char done_msg[24];
-      (void)snprintf(done_msg, sizeof(done_msg), "done %c%c\r\n", primary, secondary);
-      uart_send_response(done_msg);
+    if (move_is_active()) {
+      osDelay(5);
+      continue;
     }
 
-    g_current_instr = 0;
-    Servo_Center(&global_steer);
-    motor_stop();
-    osDelay(20);
+    Command *cmd = commands_pop();
+    if (cmd == NULL) {
+      osDelay(5);
+      continue;
+    }
+
+    execute_command(cmd);
+    commands_end(&huart3, cmd);
+    process_serial_input();
+    osDelay(5);
   }
   /* USER CODE END 5 */
 }

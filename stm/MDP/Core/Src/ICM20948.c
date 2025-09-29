@@ -234,7 +234,7 @@ void ICM20948_init(I2C_HandleTypeDef *hi2c, uint8_t selectI2cAddress, uint8_t se
         hi2c,
         selectI2cAddress,
         ICM20948__USER_BANK_2__GYRO_SMPLRT_DIV__REGISTER,
-        0x04); // Sample rate = 1.125 kHz / (1 + 4) = 225 Hz
+        0x16); // Sample rate ≈ 1.125 kHz / (1 + 0x16) ≈ 51 Hz
 
     // Return to User Bank 0
     status = _ICM20948_SelectUserBank(hi2c, selectI2cAddress, USER_BANK_0);
