@@ -1,6 +1,7 @@
 #include "commands.h"
 
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <ctype.h>
 #include <math.h>
@@ -66,24 +67,18 @@ void commands_process(UART_HandleTypeDef *uart, const uint8_t *buf, uint16_t siz
     }
     memcpy(cmd->str, buf, size);
 
-    char *payload = &parse_buffer[1];
-    char *speed_token = NULL;
-    char *angle_token = NULL;
-    char *value_token = NULL;
-
-    if (*payload != '\0') {
-        speed_token = strtok(payload, "|");
-        if (speed_token != NULL) {
-            angle_token = strtok(NULL, "|");
-        }
-        if (angle_token != NULL) {
-            value_token = strtok(NULL, "|");
-        }
+    // New format: <cmd>|<param>\n
+    const char *param_text = NULL;
+    if (parse_buffer[1] == '|') {
+        param_text = &parse_buffer[2];
     }
 
-    cmd->speed = (uint16_t)parse_uint16(speed_token);
-    cmd->angleToSteer = parse_float(angle_token);
-    cmd->val = parse_float(value_token);
+    float param_val = parse_float(param_text);
+
+    // Defaults
+    cmd->speed = 0U;
+    cmd->angleToSteer = 0.0f;
+    cmd->val = 0.0f;
     cmd->shouldSend = 1U;
 
     cmd->opType = COMMAND_OP_DRIVE;
@@ -95,37 +90,41 @@ void commands_process(UART_HandleTypeDef *uart, const uint8_t *buf, uint16_t siz
             cmd->opType = COMMAND_OP_STOP;
             cmd->dir = 0;
             break;
-        case CMD_FORWARD_DIST_TARGET:
+        case 'T': // forward straight, distance in cm
+            cmd->opType = COMMAND_OP_DRIVE;
             cmd->dir = 1;
             cmd->distType = COMMAND_DIST_TARGET;
+            cmd->val = param_val; // distance in cm
             break;
-        case CMD_FORWARD_DIST_AWAY:
-            cmd->dir = 1;
-            cmd->distType = COMMAND_DIST_STOP_AWAY;
-            break;
-        case CMD_BACKWARD_DIST_TARGET:
+        case 't': // backward straight, distance in cm
+            cmd->opType = COMMAND_OP_DRIVE;
             cmd->dir = -1;
             cmd->distType = COMMAND_DIST_TARGET;
+            cmd->val = param_val; // distance in cm (magnitude used later)
             break;
-        case CMD_BACKWARD_DIST_AWAY:
-            cmd->dir = -1;
-            cmd->distType = COMMAND_DIST_STOP_AWAY;
-            break;
-        case CMD_FORWARD_DIST_L:
+        case 'L': // forward left turn, angle in degrees
+            cmd->opType = COMMAND_OP_TURN;
             cmd->dir = 1;
-            cmd->distType = COMMAND_DIST_STOP_L;
+            cmd->angleToSteer = (param_val == 0.0f) ? -1.0f : -fabsf(param_val); // negative = left
+            cmd->val = fabsf(param_val);
             break;
-        case CMD_FORWARD_DIST_R:
+        case 'R': // forward right turn, angle in degrees
+            cmd->opType = COMMAND_OP_TURN;
             cmd->dir = 1;
-            cmd->distType = COMMAND_DIST_STOP_R;
+            cmd->angleToSteer = (param_val == 0.0f) ? +1.0f : +fabsf(param_val); // positive = right
+            cmd->val = fabsf(param_val);
             break;
-        case CMD_BACKWARD_DIST_L:
+        case 'l': // backward left turn, angle in degrees
+            cmd->opType = COMMAND_OP_TURN;
             cmd->dir = -1;
-            cmd->distType = COMMAND_DIST_STOP_L_LESS;
+            cmd->angleToSteer = (param_val == 0.0f) ? -1.0f : -fabsf(param_val);
+            cmd->val = fabsf(param_val);
             break;
-        case CMD_BACKWARD_DIST_R:
+        case 'r': // backward right turn, angle in degrees
+            cmd->opType = COMMAND_OP_TURN;
             cmd->dir = -1;
-            cmd->distType = COMMAND_DIST_STOP_R_LESS;
+            cmd->angleToSteer = (param_val == 0.0f) ? +1.0f : +fabsf(param_val);
+            cmd->val = fabsf(param_val);
             break;
         case CMD_INFO_DIST:
             cmd->opType = COMMAND_OP_INFO_DIST;
@@ -139,9 +138,6 @@ void commands_process(UART_HandleTypeDef *uart, const uint8_t *buf, uint16_t siz
             return;
     }
 
-    if (cmd->opType == COMMAND_OP_DRIVE && fabsf(cmd->angleToSteer) > 0.01f) {
-        cmd->opType = COMMAND_OP_TURN;
-    }
 
     if (s_head == NULL) {
         s_head = cmd;
@@ -254,11 +250,10 @@ static void commands_ack(UART_HandleTypeDef *uart, const Command *cmd, uint8_t i
 
 static uint16_t parse_uint16(const char *text)
 {
+    uint32_t value = 0U;
     if (text == NULL || *text == '\0') {
         return 0U;
     }
-
-    uint32_t value = 0U;
     while (*text != '\0') {
         if (!isdigit((unsigned char)*text)) {
             break;

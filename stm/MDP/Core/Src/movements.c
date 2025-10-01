@@ -7,6 +7,7 @@
 #include "cmsis_os.h"
 #include <math.h>
 #include <stdlib.h> // For abs()
+#include <stdint.h>
 
 // =================================================================================
 // T U N A B L E   P A R A M E T E R S

@@ -1,3 +1,14 @@
+// UART Command format
+// Structure: <cmd>|<param>\n
+// cmd:
+//  - 'T' : move straight forward,  param = distance in cm
+//  - 't' : move straight backward, param = distance in cm
+//  - 'L' : turn left  (forward),   param = target yaw angle in degrees
+//  - 'R' : turn right (forward),   param = target yaw angle in degrees
+//  - 'l' : turn left  (backward),  param = target yaw angle in degrees
+//  - 'r' : turn right (backward),  param = target yaw angle in degrees
+// The terminator is a newline '\n'. Example: T|30\n, r|45\n
+
 #pragma once
 
 #include <stdint.h>

@@ -182,8 +182,6 @@ typedef struct {
 // Edit this string to change the scripted sequence executed after calibration.
 static char g_instruction_plan[] = "[['L', 90],['R', 90]]";
 
-static int opcode_is_combinable(char opcode);
-static size_t coalesce_instruction_plan(scripted_move_t *steps, size_t count);
 static size_t parse_instruction_plan(scripted_move_t *steps, size_t max_steps);
 static void run_instruction_plan(void);
 
@@ -275,53 +273,6 @@ static size_t parse_instruction_plan(scripted_move_t *steps, size_t max_steps)
   return count;
 }
 
-static int opcode_is_combinable(char opcode)
-{
-  switch (opcode) {
-    case CMD_FORWARD_DIST_TARGET:
-    case CMD_BACKWARD_DIST_TARGET:
-    case 'L':
-    case 'R':
-    case 'l':
-    case 'r':
-      return 1;
-    default:
-      return 0;
-  }
-}
-
-static size_t coalesce_instruction_plan(scripted_move_t *steps, size_t count)
-{
-  if (!steps || count == 0U) {
-    return 0U;
-  }
-
-  size_t write = 0U;
-  for (size_t read = 0U; read < count; ++read) {
-    if (write > 0U) {
-      scripted_move_t *prev = &steps[write - 1U];
-      scripted_move_t *curr = &steps[read];
-      if (curr->opcode == prev->opcode && opcode_is_combinable(curr->opcode)) {
-        long combined = (long)prev->param + (long)curr->param;
-        if (combined > (long)INT_MAX) {
-          combined = (long)INT_MAX;
-        } else if (combined < (long)INT_MIN) {
-          combined = (long)INT_MIN;
-        }
-        prev->param = (int)combined;
-        continue;
-      }
-    }
-
-    if (write != read) {
-      steps[write] = steps[read];
-    }
-    write++;
-  }
-
-  return write;
-}
-
 static void configure_servo_for_motion(void)
 {
   uint32_t pclk2 = HAL_RCC_GetPCLK2Freq();
@@ -364,7 +315,6 @@ static void run_instruction_plan(void)
 {
   scripted_move_t steps[MAX_SCRIPT_STEPS];
   size_t step_count = parse_instruction_plan(steps, MAX_SCRIPT_STEPS);
-  step_count = coalesce_instruction_plan(steps, step_count);
 
   for (size_t i = 0; i < step_count; ++i) {
     char opcode = steps[i].opcode;
