@@ -44,7 +44,8 @@ typedef enum {
     COMMAND_OP_TURN,
     COMMAND_OP_STOP,
     COMMAND_OP_INFO_DIST,
-    COMMAND_OP_INFO_MARKER
+    COMMAND_OP_INFO_MARKER,
+    COMMAND_OP_IMU_CALIBRATE
 } command_op_e;
 
 typedef enum {

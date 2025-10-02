@@ -4,8 +4,8 @@
 ../Core/Src/movements.c:109:6:move_abort	8	static
 ../Core/Src/movements.c:117:6:move_start_straight	40	static
 ../Core/Src/movements.c:162:6:move_turn	32	static
-../Core/Src/movements.c:229:6:move_tick_100Hz	152	static
-../Core/Src/movements.c:392:6:move_set_profile_distances_cm	16	static
-../Core/Src/movements.c:400:6:move_get_profile_distances_cm	16	static
-../Core/Src/movements.c:406:6:move_set_turn_spinup_ticks	16	static
-../Core/Src/movements.c:411:10:move_get_turn_spinup_ticks	4	static
+../Core/Src/movements.c:229:6:move_tick_100Hz	160	static
+../Core/Src/movements.c:395:6:move_set_profile_distances_cm	16	static
+../Core/Src/movements.c:403:6:move_get_profile_distances_cm	16	static
+../Core/Src/movements.c:409:6:move_set_turn_spinup_ticks	16	static
+../Core/Src/movements.c:414:10:move_get_turn_spinup_ticks	4	static

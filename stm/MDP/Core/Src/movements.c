@@ -21,7 +21,7 @@ static float g_decel_dist_cm = 12.0f; // decelerate over last 12 cm
 // --- Speed Configuration ---
 // Speeds are defined in "encoder ticks per control period (10ms)".
 // You must tune these for your specific robot.
-#define V_MAX_TICKS_PER_DT (40.0f) // Max speed during cruise phase (e.g., 30 ticks / 10ms)
+#define V_MAX_TICKS_PER_DT (35.0f) // Max speed during cruise phase (e.g., 30 ticks / 10ms)
 #define V_MIN_TICKS_PER_DT (3.0f)  // Minimum speed to overcome static friction and ensure smooth start/stop
 
 // --- Yaw Correction ---
@@ -32,7 +32,7 @@ static float g_decel_dist_cm = 12.0f; // decelerate over last 12 cm
 
 // --- Turn Configuration ---
 // Speed for ackermann turns (encoder ticks / 10ms per wheel after scaling).
-#define TURN_BASE_TICKS_PER_DT   (30)     // base speed before inner/outer scaling
+#define TURN_BASE_TICKS_PER_DT   (25)     // base speed before inner/outer scaling
 #define TURN_YAW_TARGET_DEG      (90.0f)  // desired turn angle
 #define TURN_YAW_TOLERANCE_DEG   (0.2f)   // acceptable tolerance to stop
 #define TURN_YAW_SLOW_BAND_DEG   (10.0f)  // start slowing when within this band
@@ -245,11 +245,14 @@ void move_tick_100Hz(void) {
     ms.yaw_accum_deg += yaw_delta;
     ms.prev_yaw_deg = current_yaw;
 
-    // Compute remaining angle to target
-    float err = ms.yaw_target_deg - ms.yaw_accum_deg; // degrees remaining
+  // Compute remaining angle to target
+  float err = ms.yaw_target_deg - ms.yaw_accum_deg; // degrees remaining
+  float target_abs = fabsf(ms.yaw_target_deg);
+  float accum_abs = fabsf(ms.yaw_accum_deg);
 
-    // If within tolerance, stop
-    if (fabsf(err) <= TURN_YAW_TOLERANCE_DEG) {
+  // If within tolerance or we have crossed/exceeded the desired yaw, stop
+  if ((fabsf(err) <= TURN_YAW_TOLERANCE_DEG) ||
+    (target_abs > 0.0f && accum_abs >= target_abs)) {
       ms.active = 0;
       ms.mode = MOVE_IDLE;
       control_set_target_ticks_per_dt(0, 0);

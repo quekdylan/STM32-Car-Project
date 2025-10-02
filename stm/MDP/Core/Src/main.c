@@ -180,7 +180,7 @@ typedef struct {
 #define SCRIPT_DEFAULT_BRAKE_MS 50U
 
 // Edit this string to change the scripted sequence executed after calibration.
-static char g_instruction_plan[] = "[['L', 90],['R', 90]]";
+static char g_instruction_plan[] = "[['R', 90],['L', 90],['l', 90],['r', 90] ]";
 
 static size_t parse_instruction_plan(scripted_move_t *steps, size_t max_steps);
 static void run_instruction_plan(void);
@@ -1215,6 +1215,9 @@ static char command_display_code(const Command *cmd)
     case COMMAND_OP_INFO_MARKER:
       return CMD_INFO_MARKER;
 
+    case COMMAND_OP_IMU_CALIBRATE:
+      return 'C';
+
     case COMMAND_OP_INVALID:
     default:
       break;
@@ -1282,6 +1285,28 @@ static void execute_command(Command *cmd)
         motor_stop();
       }
       break;
+
+    case COMMAND_OP_IMU_CALIBRATE:
+    {
+      move_abort();
+      control_set_target_ticks_per_dt(0, 0);
+      motor_brake_ms(50);
+      motor_stop();
+      Servo_Center(&global_steer);
+
+      g_is_calibrating = 1U;
+      osDelay(100);
+
+      const int sample_count = 2500; // 5 seconds @ 2 ms per sample
+      imu_calibrate_bias_blocking(sample_count);
+      imu_zero_yaw();
+
+      g_is_calibrating = 0U;
+      g_gyro_log.yaw_unwrapped_deg = 0.0f;
+      g_gyro_log.prev_yaw_deg = 0.0f;
+      g_gyro_log.have_prev_sample = 0U;
+      break;
+    }
 
     case COMMAND_OP_INFO_DIST:
     case COMMAND_OP_INFO_MARKER:

@@ -17,6 +17,7 @@ static Command *get_new_cmd(void);
 static void commands_ack(UART_HandleTypeDef *uart, const Command *cmd, uint8_t indicator);
 static uint16_t parse_uint16(const char *text);
 static float parse_float(const char *text);
+static uint8_t parse_snap_command(Command *cmd, const char *text);
 
 void commands_init(void)
 {
@@ -67,14 +68,6 @@ void commands_process(UART_HandleTypeDef *uart, const uint8_t *buf, uint16_t siz
     }
     memcpy(cmd->str, buf, size);
 
-    // New format: <cmd>|<param>\n
-    const char *param_text = NULL;
-    if (parse_buffer[1] == '|') {
-        param_text = &parse_buffer[2];
-    }
-
-    float param_val = parse_float(param_text);
-
     // Defaults
     cmd->speed = 0U;
     cmd->angleToSteer = 0.0f;
@@ -85,7 +78,34 @@ void commands_process(UART_HandleTypeDef *uart, const uint8_t *buf, uint16_t siz
     cmd->dir = 0;
     cmd->distType = COMMAND_DIST_TARGET;
 
-    switch (flag) {
+    if (parse_snap_command(cmd, parse_buffer)) {
+        // SNAP command handled
+    } else {
+        char flag = parse_buffer[0];
+        if (flag == '\0' || flag == CMD_TURN_IN_PLACE) {
+            free(cmd->str);
+            free(cmd);
+            return;
+        }
+
+        // Formats supported: <cmd><param> or legacy <cmd>|<param>
+        const char *param_text = NULL;
+        if (parse_buffer[1] != '\0') {
+            const char *p = &parse_buffer[1];
+            if (*p == CMD_SEP) {
+                ++p;
+            }
+            while (*p != '\0' && isspace((unsigned char)*p)) {
+                ++p;
+            }
+            if (*p != '\0') {
+                param_text = p;
+            }
+        }
+
+        float param_val = parse_float(param_text);
+
+        switch (flag) {
         case CMD_FULL_STOP:
             cmd->opType = COMMAND_OP_STOP;
             cmd->dir = 0;
@@ -136,6 +156,8 @@ void commands_process(UART_HandleTypeDef *uart, const uint8_t *buf, uint16_t siz
             free(cmd->str);
             free(cmd);
             return;
+    }
+
     }
 
 
@@ -274,4 +296,38 @@ static float parse_float(const char *text)
         return 0.0f;
     }
     return strtof(text, NULL);
+}
+
+static uint8_t parse_snap_command(Command *cmd, const char *text)
+{
+    if (cmd == NULL || text == NULL) {
+        return 0U;
+    }
+
+    if (strncmp(text, "SNAP", 4) != 0) {
+        return 0U;
+    }
+
+    const char *digits = text + 4;
+    char *suffix = NULL;
+    long seq = strtol(digits, &suffix, 10);
+
+    if (suffix == NULL || strcmp(suffix, "_C") != 0) {
+        return 0U;
+    }
+
+    if (seq < 0L) {
+        seq = 0L;
+    }
+
+    // Clamp to reasonable range to avoid huge floats
+    if (seq > 1000000L) {
+        seq = 1000000L;
+    }
+
+    cmd->opType = COMMAND_OP_IMU_CALIBRATE;
+    cmd->val = (float)seq;
+    cmd->dir = 0;
+    cmd->distType = COMMAND_DIST_TARGET;
+    return 1U;
 }

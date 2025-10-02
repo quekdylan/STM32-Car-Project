@@ -107,7 +107,7 @@ void motor_brake_ms(uint16_t ms) {
 }
 
 int32_t motor_get_left_encoder_counts(void) {
-    return (int16_t)__HAL_TIM_GET_COUNTER(&htim2);
+    return (int32_t)((int16_t)__HAL_TIM_GET_COUNTER(&htim2));
 }
 
 // Right motor is reversed, so return the negative.

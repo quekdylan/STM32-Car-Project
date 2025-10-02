@@ -28,10 +28,10 @@
 ../Core/Src/main.c:1135:13:process_serial_input	5
 ../Core/Src/main.c:1159:13:wait_for_motion_completion	2
 ../Core/Src/main.c:1167:13:determine_turn_opcode	5
-../Core/Src/main.c:1180:13:command_display_code	19
-../Core/Src/main.c:1233:13:execute_command	11
-../Core/Src/main.c:1309:6:StartDefaultTask	8
-../Core/Src/main.c:1367:6:control_task	2
-../Core/Src/main.c:1388:6:oled_task	9
-../Core/Src/main.c:1479:6:uart_task	1
-../Core/Src/main.c:1494:6:Error_Handler	1
+../Core/Src/main.c:1180:13:command_display_code	20
+../Core/Src/main.c:1236:13:execute_command	11
+../Core/Src/main.c:1334:6:StartDefaultTask	8
+../Core/Src/main.c:1392:6:control_task	2
+../Core/Src/main.c:1413:6:oled_task	9
+../Core/Src/main.c:1504:6:uart_task	1
+../Core/Src/main.c:1519:6:Error_Handler	1
