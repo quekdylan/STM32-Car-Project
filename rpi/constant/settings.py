@@ -1,0 +1,12 @@
+# STM32 BOARD SERIAL CONNECTION
+SERIAL_PORT = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A6C067775-if00" # stm32
+BAUD_RATE = 115200
+
+# API DETAILS
+API_IP = "192.168.19.40"  # IP address of laptop
+API_PORT = 5000
+URL = f"http://{API_IP}:{API_PORT}"
+API_TIMEOUT = 90
+
+# ROBOT SETTINGS
+OUTDOOR_BIG_TURN = False
