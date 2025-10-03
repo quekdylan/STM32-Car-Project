@@ -2,6 +2,11 @@
 #pragma once
 #include <stdint.h>
 
+typedef enum {
+  MOVE_TURN_PROFILE_PRIMARY = 0,
+  MOVE_TURN_PROFILE_SECONDARY = 1
+} move_turn_profile_e;
+
 // Start a straight movement for the given distance in centimeters.
 // Positive = forward, Negative = backward.
 void move_start_straight(float distance_cm);
@@ -36,3 +41,7 @@ void move_get_profile_distances_cm(float *accel_cm, float *decel_cm);
 // Configure the duration (in 100 Hz ticks) that turns stay at TURN_MIN_TICKS_PER_DT
 void move_set_turn_spinup_ticks(uint16_t ticks_100Hz);
 uint16_t move_get_turn_spinup_ticks(void);
+
+// Select which turn profile to use for subsequent turns.
+void move_set_turn_profile(move_turn_profile_e profile);
+move_turn_profile_e move_get_turn_profile(void);

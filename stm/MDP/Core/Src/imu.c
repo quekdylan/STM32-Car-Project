@@ -14,7 +14,9 @@ static float    s_gyro_bias_z = 0.0f;  // bias in deg/s (for Z axis)
 static uint8_t  s_mag_ready   = 0;     // magnetometer enabled flag
 
 // Gyro scale factor
-static float    s_scale_factor = 1.0f; // gyro scale factor (k)
+static float    s_scale_factor     = 1.0f; // gyro scale factor (k)
+static float    s_gyro_lsb_per_dps = GRYO_SENSITIVITY_SCALE_FACTOR_2000DPS; // updated after init
+static uint8_t  s_gyro_fs_setting  = GYRO_FULL_SCALE_2000DPS;
 
 typedef struct {
     float min_x;
@@ -34,8 +36,8 @@ static void mag_cal_reset_(void){
     s_mag_cal.have_range = 0;
 }
 
-// 100 Hz update period
-#define IMU_DT_S 0.01f
+// 50 Hz update period when decimated from a 100 Hz caller (20 ms effective)
+#define IMU_DT_S 0.02f
 
 // Small deadband to squash tiny noise (in deg/s) when robot is still
 #define GZ_DEADBAND_DPS  0.4f
@@ -48,40 +50,40 @@ static inline float wrap180(float a){
 }
 
 // -----------------------
-// Bias calibration @ 2000 dps
+// Bias calibration (uses active full-scale setting)
 // -----------------------
-// This function measures the gyro's zero-rate bias by taking 1000 samples
-// over 2 seconds while the robot is stationary. The average of these readings
-// represents the gyro's drift rate in deg/s.
+// This function measures the gyro's zero-rate bias by averaging a caller-defined
+// number of stationary samples. The average of these readings represents the
+// gyro's drift rate in deg/s.
 //
 // HOW IT WORKS:
-// 1. Takes 1000 samples at 2ms intervals (total: 2000ms)
-// 2. Reads raw gyro Z values at 2000 dps scale
-// 3. Converts raw values to deg/s: gz_dps = raw_value / 16.4
-// 4. Calculates average: bias = sum_of_readings / 1000
+// 1. Takes N samples at ~2ms intervals while the robot is stationary
+// 2. Reads raw gyro Z using the current full-scale configuration
+// 3. Converts raw values to deg/s using the matching scale factor
+// 4. Calculates average: bias = sum_of_readings / N
 // 5. Result: The gyro's drift rate in deg/s
 //
 // NOTE: This automatic calibration may not be as accurate as manually
 // measured drift values, which is why we use a fixed optimized value (0.43)
-static void imu_calibrate_bias_(void){
-    // ~2 second of samples at ~1000 * 2ms = ~2000ms
-    const int N = 1000;
+static void imu_calibrate_bias_(int sample_count){
+    if (!s_imu_i2c || sample_count <= 0) {
+        return;
+    }
+
     float sum_dps = 0.0f;
 
-    for (int i = 0; i < N; i++){
+    for (int i = 0; i < sample_count; i++){
         int16_t gz_raw = 0;
-        // Read raw Z at 2000 dps scale
-        ICM20948_readGyroscope_Z(s_imu_i2c, s_addrSel, GYRO_FULL_SCALE_2000DPS, &gz_raw);
+        // Read raw counts using the active full-scale setting
+        ICM20948_readGyroscope_Z(s_imu_i2c, s_addrSel, s_gyro_fs_setting, &gz_raw);
 
-        // Convert raw -> deg/s (use constant for 2000 dps range)
-        const float LSB_PER_DPS = (float)GRYO_SENSITIVITY_SCALE_FACTOR_2000DPS; // ~16.4 LSB/(deg/s)
-        float gz_dps = ((float)gz_raw) / LSB_PER_DPS;
+        // Convert raw -> deg/s using the matching scale factor
+        float gz_dps = ((float)gz_raw) / s_gyro_lsb_per_dps;
 
         sum_dps += gz_dps;
         HAL_Delay(2);
     }
-
-    s_gyro_bias_z = sum_dps / (float)N; // average bias (deg/s)
+    s_gyro_bias_z = sum_dps / (float)sample_count; // average bias (deg/s)
 }
 
 // =======================
@@ -97,12 +99,15 @@ void imu_init(I2C_HandleTypeDef *hi2c, uint8_t *out_addrSel){
 
     if (out_addrSel) *out_addrSel = s_addrSel;
 
-    // Configure IMU with 2000 dps full-scale
-    ICM20948_init(hi2c, s_addrSel, GYRO_FULL_SCALE_2000DPS);
+    // Configure IMU with 500 dps full-scale (higher resolution, lower noise)
+    const uint8_t fs_setting = GYRO_FULL_SCALE_500DPS;
+    ICM20948_init(hi2c, s_addrSel, fs_setting);
+    s_gyro_fs_setting = fs_setting;
+    s_gyro_lsb_per_dps = GRYO_SENSITIVITY_SCALE_FACTOR_500DPS;
 
     // Set optimized gyro bias based on measured drift performance
     // This eliminates the need for manual calibration during startup
-    s_gyro_bias_z = 0.43f;  // Optimized bias for minimal drift (deg/s)
+    s_gyro_bias_z = -0.4f;  // Optimized bias for minimal drift (deg/s)
     s_yaw_deg = 0.0f;
 
     // Enable magnetometer (non-fatal if fails)
@@ -114,12 +119,16 @@ void imu_init(I2C_HandleTypeDef *hi2c, uint8_t *out_addrSel){
     }
 }
 
-void imu_calibrate_bias_blocking(void){
+void imu_calibrate_bias_blocking(int sample_count){
     if (!s_imu_i2c) {
         return;
     }
 
-    imu_calibrate_bias_();
+    imu_calibrate_bias_(sample_count);
+    const float bias_seed = 0.4f;
+    const float alpha = 0.6f;
+    float measured_bias = s_gyro_bias_z;
+    s_gyro_bias_z = (alpha * measured_bias) + ((1.0f - alpha) * bias_seed);
     // After calibration we know the current orientation should be treated as
     // the zero reference for subsequent motion planning.
     s_yaw_deg = 0.0f;
@@ -189,12 +198,11 @@ int imu_read_mag_heading_deg(float *heading_deg){
 void Gyro_Read_Z(I2C_HandleTypeDef *hi2c, float *gyroZ_dps){
     int16_t gz_raw = 0;
 
-    // Read raw Z at 2000 dps scale
-    ICM20948_readGyroscope_Z(hi2c, s_addrSel, GYRO_FULL_SCALE_2000DPS, &gz_raw);
+    // Read raw Z at the configured full-scale
+    ICM20948_readGyroscope_Z(hi2c, s_addrSel, s_gyro_fs_setting, &gz_raw);
 
-    // Convert raw -> deg/s
-    const float LSB_PER_DPS = (float)GRYO_SENSITIVITY_SCALE_FACTOR_2000DPS; // ~16.4
-    float gz_dps = ((float)gz_raw) / LSB_PER_DPS;
+    // Convert raw -> deg/s using the active scale factor
+    float gz_dps = ((float)gz_raw) / s_gyro_lsb_per_dps;
 
     // Remove bias
     gz_dps -= s_gyro_bias_z;
@@ -207,16 +215,22 @@ void Gyro_Read_Z(I2C_HandleTypeDef *hi2c, float *gyroZ_dps){
     *gyroZ_dps = gz_dps;
 }
 
-// Call this at 100 Hz (every 10 ms): integrates Z rate into yaw (deg), wraps to [-180,180]
+// Caller runs at 100 Hz, but we decimate to 50 Hz samples for integration
 void imu_update_yaw_100Hz(void){
+    static uint8_t sample_toggle = 0U; // ensure 50 Hz sampling cadence
+
+    sample_toggle ^= 1U;
+    if (sample_toggle == 0U) {
+        return;
+    }
+
     int16_t gz_raw = 0;
 
-    // Read raw Z at 2000 dps scale
-    ICM20948_readGyroscope_Z(s_imu_i2c, s_addrSel, GYRO_FULL_SCALE_2000DPS, &gz_raw);
+    // Read raw Z at the configured full-scale
+    ICM20948_readGyroscope_Z(s_imu_i2c, s_addrSel, s_gyro_fs_setting, &gz_raw);
 
-    // Convert raw -> deg/s
-    const float LSB_PER_DPS = (float)GRYO_SENSITIVITY_SCALE_FACTOR_2000DPS; // ~16.4
-    float yaw_rate_dps = ((float)gz_raw) / LSB_PER_DPS;
+    // Convert raw -> deg/s using the active scale factor
+    float yaw_rate_dps = ((float)gz_raw) / s_gyro_lsb_per_dps;
 
     // Remove bias
     yaw_rate_dps -= s_gyro_bias_z;

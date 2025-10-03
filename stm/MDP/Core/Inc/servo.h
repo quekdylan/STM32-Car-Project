@@ -67,12 +67,18 @@ static inline uint32_t Servo_US2CCR(const Servo *s, uint16_t us) {
     return (uint32_t)(c + 0.5f);
 }
 
-#define SERVO_LEFT_LIMIT_US   1084U
+// Optimized for marble floor, differential bias = 1.5
+// #define SERVO_LEFT_LIMIT_US   1090U
+// #define SERVO_CENTER_US       1508U
+// #define SERVO_RIGHT_LIMIT_US  2196U
+
+#define SERVO_LEFT_LIMIT_US   993U
 #define SERVO_CENTER_US       1508U
-#define SERVO_RIGHT_LIMIT_US  2690U
+#define SERVO_RIGHT_LIMIT_US  2375U
 
 #ifdef __cplusplus
 }
 #endif
 
 #endif // SERVO_H
+        
