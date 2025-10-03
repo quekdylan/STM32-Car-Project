@@ -180,7 +180,7 @@ typedef struct {
 #define SCRIPT_DEFAULT_BRAKE_MS 50U
 
 // Edit this string to change the scripted sequence executed after calibration.
-static char g_instruction_plan[] = "[['R', 90],['L', 90],['l', 90],['r', 90] ]";
+static char g_instruction_plan[] = "[['T', 200],['t', 200]]";
 
 static size_t parse_instruction_plan(scripted_move_t *steps, size_t max_steps);
 static void run_instruction_plan(void);
@@ -1060,8 +1060,8 @@ static void oled_draw_default_layout(void)
 {
   OLED_Clear();
   OLED_ShowString(0, 0, (uint8_t*)"Dist(cm):");
-  OLED_ShowString(0, 24, (uint8_t*)"RX char:");
-  OLED_ShowString(0, 48, (uint8_t*)"Cmd: ");
+  OLED_ShowString(0, 24, (uint8_t*)"Yaw(deg):");
+  OLED_ShowString(0, 48, (uint8_t*)"RX char:");
   OLED_Refresh_Gram();
 }
 
@@ -1443,6 +1443,7 @@ void oled_task(void *argument)
       ultrasonic_trigger();
       osDelay(50); // Wait for measurement
       float distance = ultrasonic_get_distance_cm();
+      float yaw_deg = imu_get_yaw();
       // --- END SENSOR LOGIC ---
 
       char buf[16];
@@ -1455,21 +1456,25 @@ void oled_task(void *argument)
       OLED_ShowString(72, 0, (uint8_t*)"       ");
       OLED_ShowString(72, 0, (uint8_t*)buf);
 
+      int yaw10 = (int)(yaw_deg * 10.0f + (yaw_deg >= 0.0f ? 0.5f : -0.5f));
+      int yaw_sign = 1;
+      if (yaw10 < 0) {
+        yaw_sign = -1;
+        yaw10 = -yaw10;
+      }
+      int yaw_int = yaw10 / 10;
+      int yaw_tenth = yaw10 % 10;
+      (void)snprintf(buf, sizeof(buf), "%c%3d.%1d", (yaw_sign < 0) ? '-' : ' ', yaw_int, yaw_tenth);
+      OLED_ShowString(72, 24, (uint8_t*)"       ");
+      OLED_ShowString(72, 24, (uint8_t*)buf);
+
       uint8_t rx_valid = g_uart_char_valid;
       uint8_t rx_char = g_uart_last_char;
       if (rx_valid) {
-        OLED_ShowString(72, 24, (uint8_t*)"   ");
-        OLED_ShowChar(72, 24, (char)rx_char, 12, 1);
+        OLED_ShowString(72, 48, (uint8_t*)"   ");
+        OLED_ShowChar(72, 48, (char)rx_char, 12, 1);
       } else {
-        OLED_ShowString(72, 24, (uint8_t*)" - ");
-      }
-
-      char cmd_char = g_current_instr;
-      if (cmd_char) {
-        OLED_ShowString(48, 48, (uint8_t*)"   ");
-        OLED_ShowChar(48, 48, cmd_char, 12, 1);
-      } else {
-        OLED_ShowString(48, 48, (uint8_t*)" - ");
+        OLED_ShowString(72, 48, (uint8_t*)" - ");
       }
 
       /*
