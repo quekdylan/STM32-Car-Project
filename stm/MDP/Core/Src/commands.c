@@ -116,6 +116,12 @@ void commands_process(UART_HandleTypeDef *uart, const uint8_t *buf, uint16_t siz
             cmd->distType = COMMAND_DIST_TARGET;
             cmd->val = param_val; // distance in cm
             break;
+        case 'W': // forward move with obstacle avoidance
+            cmd->opType = COMMAND_OP_DRIVE;
+            cmd->dir = 1;
+            cmd->distType = COMMAND_DIST_STOP_AWAY;
+            cmd->val = fabsf(param_val);
+            break;
         case 't': // backward straight, distance in cm
             cmd->opType = COMMAND_OP_DRIVE;
             cmd->dir = -1;

@@ -8,6 +8,9 @@
 // Writes detected address to out_addrSel if non-NULL.
 void imu_init(I2C_HandleTypeDef *hi2c, uint8_t *out_addrSel);
 
+// Returns 1 if the IMU was detected during initialization.
+uint8_t imu_is_available(void);
+
 // Blocking gyro bias calibration (~2 s of samples). Call when the robot is
 // stationary; yaw is zeroed after calibration so future deltas are relative to
 // the calibrated heading.

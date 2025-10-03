@@ -42,14 +42,19 @@ static float g_decel_dist_cm = 12.0f; // decelerate over last 12 cm
 // duration (in 100 Hz ticks) to hold/transition minimum speed at turn start to allow time for front wheels to turn
 static uint16_t g_turn_spinup_ticks = 100;
 
-// Ackermann geometry (cm) and steering calibration
-#define WHEELBASE_CM             (14.5f)
-#define TRACK_WIDTH_CM           (16.5f)
-// Estimated max physical front steering angle (deg) at Servo_WriteAngle ±100.
-#define STEER_MAX_DEG            (30.0f)
+// Turn profiles allow quick switching between steering envelopes/differentials.
+#define TURN_DEFAULT_PROFILE               MOVE_TURN_PROFILE_PRIMARY
+
+// 30cm turn radius
+#define TURN_PROFILE_PRIMARY_STEER_MAG      (90.9f)
+#define TURN_PROFILE_PRIMARY_OUTER_RATIO    (1.759f)
+
+//20cm turn radius
+#define TURN_PROFILE_SECONDARY_STEER_MAG    (100.0f)
+#define TURN_PROFILE_SECONDARY_OUTER_RATIO  (5.0f)
 
 // Steering angles for Ackermann (Servo_WriteAngle: -100=full left, +100=full right)
-#define STEER_ANGLE_MAG          (100.0f)  // magnitude for turning
+// are derived from the selected turn profile.
 
 // =================================================================================
 // M O D U L E   S T A T E
@@ -90,6 +95,22 @@ typedef struct {
 
 static move_state_t ms = {0};
 
+static move_turn_profile_e g_turn_profile = TURN_DEFAULT_PROFILE;
+
+static float turn_profile_get_steer_mag(void)
+{
+  return (g_turn_profile == MOVE_TURN_PROFILE_PRIMARY)
+             ? TURN_PROFILE_PRIMARY_STEER_MAG
+             : TURN_PROFILE_SECONDARY_STEER_MAG;
+}
+
+static float turn_profile_get_outer_ratio(void)
+{
+  return (g_turn_profile == MOVE_TURN_PROFILE_PRIMARY)
+             ? TURN_PROFILE_PRIMARY_OUTER_RATIO
+             : TURN_PROFILE_SECONDARY_OUTER_RATIO;
+}
+
 static uint32_t compute_servo_settle_ms(float target_cmd)
 {
   float delta = fabsf(target_cmd - ms.steer_cmd);
@@ -104,6 +125,19 @@ extern Servo global_steer; // provided by main.c
 
 uint8_t move_is_active(void) {
   return ms.active;
+}
+
+void move_set_turn_profile(move_turn_profile_e profile)
+{
+  if (profile != MOVE_TURN_PROFILE_PRIMARY && profile != MOVE_TURN_PROFILE_SECONDARY) {
+    return;
+  }
+  g_turn_profile = profile;
+}
+
+move_turn_profile_e move_get_turn_profile(void)
+{
+  return g_turn_profile;
 }
 
 void move_abort(void) {
@@ -196,7 +230,8 @@ void move_turn(char dir_char, float angle_deg)
   ms.yaw_target_deg = yaw_target;
 
   // Steering command: Servo negative = left, positive = right; consistent even when reversing
-  float steer_angle = (ms.turn_sign > 0) ? -STEER_ANGLE_MAG : +STEER_ANGLE_MAG;
+  float profile_steer_mag = turn_profile_get_steer_mag();
+  float steer_angle = (ms.turn_sign > 0) ? -profile_steer_mag : +profile_steer_mag;
 
   // Ensure rear wheels are stationary before moving the steering linkage
   control_set_target_ticks_per_dt(0, 0);
@@ -290,41 +325,28 @@ void move_tick_100Hz(void) {
       }
     }
 
-    // Ackermann differential on rear wheels:
-    // Use bicycle model: R = L / tan(delta). Scale rear left/right by (R ± T/2)/R.
-    float steer_mag = fabsf(ms.steer_cmd); // 0..100
-    int32_t left, right;
-    if (steer_mag < 1e-3f) {
-      // Essentially straight
-      left  = base * ms.drive_sign;
-      right = base * ms.drive_sign;
-    } else {
-      float delta_deg = (steer_mag / 100.0f) * STEER_MAX_DEG;
-      float delta_rad = delta_deg * (3.14159265358979323846f / 180.0f);
-      float tan_delta = tanf(delta_rad);
-      if (fabsf(tan_delta) < 1e-4f) {
-        left  = base * ms.drive_sign;
-        right = base * ms.drive_sign;
-      } else {
-        float R = WHEELBASE_CM / tan_delta;   // turn radius of rear axle centerline
-        float rfac = TRACK_WIDTH_CM / (2.0f * fabsf(R)); // >= 0
-        rfac *= 1.5f; // stronger bias for tighter turns
-        // Clamp to avoid negative inner factor at extreme angles
-        if (rfac > 0.9f) rfac = 0.9f;
-        float inner = (1.0f - rfac);
-        float outer = (1.0f + rfac);
-        // For left turn, left is inner; for right turn, right is inner
-        float lscale = (ms.turn_sign > 0) ? inner : outer;
-        float rscale = (ms.turn_sign > 0) ? outer : inner;
-        int32_t lcmd = (int32_t)lroundf((float)base * lscale);
-        int32_t rcmd = (int32_t)lroundf((float)base * rscale);
-        // Enforce minimum per-wheel speed while turning
-        if (lcmd < TURN_MIN_TICKS_PER_DT) lcmd = TURN_MIN_TICKS_PER_DT;
-        if (rcmd < TURN_MIN_TICKS_PER_DT) rcmd = TURN_MIN_TICKS_PER_DT;
-        left  = lcmd * ms.drive_sign;
-        right = rcmd * ms.drive_sign;
-      }
+    // Simple differential: outer wheel runs faster based on active turn profile ratio.
+    int32_t slow = base;
+    if (slow < TURN_MIN_TICKS_PER_DT) {
+      slow = TURN_MIN_TICKS_PER_DT;
     }
+
+    float outer_ratio = turn_profile_get_outer_ratio();
+    if (outer_ratio < 1.0f) {
+      outer_ratio = 1.0f;
+    }
+
+    int32_t fast = (int32_t)lroundf((float)slow * outer_ratio);
+    if (fast < TURN_MIN_TICKS_PER_DT) {
+      fast = TURN_MIN_TICKS_PER_DT;
+    }
+
+    int32_t left = (ms.turn_sign > 0) ? slow : fast;
+    int32_t right = (ms.turn_sign > 0) ? fast : slow;
+
+    left *= ms.drive_sign;
+    right *= ms.drive_sign;
+
     control_set_target_ticks_per_dt(left, right);
     return;
   }

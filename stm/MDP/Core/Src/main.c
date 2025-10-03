@@ -110,6 +110,9 @@ volatile char g_current_instr = 0;
 // Flag while the IMU is undergoing calibration so the UI can show status.
 volatile uint8_t g_is_calibrating = 0;
 
+// Ensure the first UART command triggers a one-time IMU calibration.
+static uint8_t g_uart_initial_calibration_done = 0U;
+
 // Servo calibration results
 volatile float g_left_avg_rate = 0.0f; // Store left turn average rate
 volatile float g_right_avg_rate = 0.0f; // Store right turn average rate
@@ -166,6 +169,7 @@ static void execute_straight_move(float distance_cm, uint32_t brake_ms);
 static void execute_turn_move(char turn_opcode, float angle_deg, uint32_t brake_ms);
 static void configure_servo_for_motion(void);
 static void perform_initial_calibration(void);
+static void perform_first_uart_calibration(void);
 static void process_serial_input(void);
 static void execute_command(Command *cmd);
 static void wait_for_motion_completion(void);
@@ -180,7 +184,7 @@ typedef struct {
 #define SCRIPT_DEFAULT_BRAKE_MS 50U
 
 // Edit this string to change the scripted sequence executed after calibration.
-static char g_instruction_plan[] = "[['T', 200],['t', 200]]";
+static char g_instruction_plan[] = "[['T', 200]]";
 
 static size_t parse_instruction_plan(scripted_move_t *steps, size_t max_steps);
 static void run_instruction_plan(void);
@@ -298,6 +302,27 @@ static void perform_initial_calibration(void)
   imu_zero_yaw();
   g_is_calibrating = 0;
 
+  g_gyro_log.yaw_unwrapped_deg = 0.0f;
+  g_gyro_log.prev_yaw_deg = 0.0f;
+  g_gyro_log.have_prev_sample = 0U;
+}
+
+static void perform_first_uart_calibration(void)
+{
+  move_abort();
+  control_set_target_ticks_per_dt(0, 0);
+  motor_brake_ms(50);
+  motor_stop();
+  Servo_Center(&global_steer);
+
+  g_is_calibrating = 1U;
+  osDelay(100);
+
+  const int sample_count = 2000; // 4 seconds @ 2 ms per sample
+  imu_calibrate_bias_blocking(sample_count);
+  imu_zero_yaw();
+
+  g_is_calibrating = 0U;
   g_gyro_log.yaw_unwrapped_deg = 0.0f;
   g_gyro_log.prev_yaw_deg = 0.0f;
   g_gyro_log.have_prev_sample = 0U;
@@ -1283,6 +1308,77 @@ static void execute_command(Command *cmd)
         control_set_target_ticks_per_dt(0, 0);
         motor_brake_ms(50);
         motor_stop();
+      } else if (cmd->distType == COMMAND_DIST_STOP_AWAY) {
+        const float forward_distance_cm = fabsf(cmd->val);
+        if (forward_distance_cm <= 0.0f) {
+          break;
+        }
+
+        const float stop_threshold_cm = 25.0f;
+        move_start_straight(forward_distance_cm);
+
+        uint8_t consecutive_close = 0U;
+        uint8_t obstacle_stopped = 0U;
+
+        while (move_is_active()) {
+          osDelay(10);
+          process_serial_input();
+
+          ultrasonic_trigger();
+          osDelay(50);
+          float sensed = ultrasonic_get_distance_cm();
+
+          if (sensed > 0.0f && sensed < stop_threshold_cm) {
+            consecutive_close++;
+            if (consecutive_close >= 2U) {
+              move_abort();
+              Servo_Center(&global_steer);
+              osDelay(50);
+
+              control_set_target_ticks_per_dt(0, 0);
+              motor_stop();
+
+              obstacle_stopped = 1U;
+              break;
+            }
+          } else {
+            consecutive_close = 0U;
+          }
+        }
+
+        if (!obstacle_stopped) {
+          wait_for_motion_completion();
+          control_set_target_ticks_per_dt(0, 0);
+          motor_brake_ms(50);
+          motor_stop();
+        } else {
+          const uint32_t reverse_timeout_ms = 4000U;
+          const int32_t reverse_ticks = -3;
+          uint32_t reverse_start_ms = HAL_GetTick();
+
+          control_set_target_ticks_per_dt(reverse_ticks, reverse_ticks);
+
+          while (1) {
+            osDelay(60);
+            process_serial_input();
+
+            ultrasonic_trigger();
+            osDelay(50);
+            float sensed = ultrasonic_get_distance_cm();
+
+            if (sensed > stop_threshold_cm) {
+              break;
+            }
+
+            if ((HAL_GetTick() - reverse_start_ms) > reverse_timeout_ms) {
+              break;
+            }
+          }
+
+          control_set_target_ticks_per_dt(0, 0);
+          motor_brake_ms(50);
+          motor_stop();
+        }
       }
       break;
 
@@ -1374,6 +1470,12 @@ void StartDefaultTask(void *argument)
       continue;
     }
 
+    if (!g_uart_initial_calibration_done) {
+      g_uart_initial_calibration_done = 1U;
+      perform_first_uart_calibration();
+      process_serial_input();
+    }
+
     execute_command(cmd);
     commands_end(&huart3, cmd);
     process_serial_input();
@@ -1443,7 +1545,6 @@ void oled_task(void *argument)
       ultrasonic_trigger();
       osDelay(50); // Wait for measurement
       float distance = ultrasonic_get_distance_cm();
-      float yaw_deg = imu_get_yaw();
       // --- END SENSOR LOGIC ---
 
       char buf[16];
@@ -1456,25 +1557,21 @@ void oled_task(void *argument)
       OLED_ShowString(72, 0, (uint8_t*)"       ");
       OLED_ShowString(72, 0, (uint8_t*)buf);
 
-      int yaw10 = (int)(yaw_deg * 10.0f + (yaw_deg >= 0.0f ? 0.5f : -0.5f));
-      int yaw_sign = 1;
-      if (yaw10 < 0) {
-        yaw_sign = -1;
-        yaw10 = -yaw10;
-      }
-      int yaw_int = yaw10 / 10;
-      int yaw_tenth = yaw10 % 10;
-      (void)snprintf(buf, sizeof(buf), "%c%3d.%1d", (yaw_sign < 0) ? '-' : ' ', yaw_int, yaw_tenth);
-      OLED_ShowString(72, 24, (uint8_t*)"       ");
-      OLED_ShowString(72, 24, (uint8_t*)buf);
-
       uint8_t rx_valid = g_uart_char_valid;
       uint8_t rx_char = g_uart_last_char;
       if (rx_valid) {
-        OLED_ShowString(72, 48, (uint8_t*)"   ");
-        OLED_ShowChar(72, 48, (char)rx_char, 12, 1);
+        OLED_ShowString(72, 24, (uint8_t*)"   ");
+        OLED_ShowChar(72, 24, (char)rx_char, 12, 1);
       } else {
-        OLED_ShowString(72, 48, (uint8_t*)" - ");
+        OLED_ShowString(72, 24, (uint8_t*)" - ");
+      }
+
+      char cmd_char = g_current_instr;
+      if (cmd_char) {
+        OLED_ShowString(48, 48, (uint8_t*)"   ");
+        OLED_ShowChar(48, 48, cmd_char, 12, 1);
+      } else {
+        OLED_ShowString(48, 48, (uint8_t*)" - ");
       }
 
       /*

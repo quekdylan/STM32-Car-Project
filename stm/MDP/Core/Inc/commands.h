@@ -2,6 +2,7 @@
 // Structure: <cmd>|<param>\n
 // cmd:
 //  - 'T' : move straight forward,  param = distance in cm
+//  - 'W' : move forward until distance reached or obstacle <=25cm
 //  - 't' : move straight backward, param = distance in cm
 //  - 'L' : turn left  (forward),   param = target yaw angle in degrees
 //  - 'R' : turn right (forward),   param = target yaw angle in degrees
@@ -82,4 +83,3 @@ void commands_clear_queue(UART_HandleTypeDef *uart);
 #ifdef __cplusplus
 }
 #endif
-

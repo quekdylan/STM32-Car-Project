@@ -160,7 +160,7 @@ static HAL_StatusTypeDef _ICM20948_BurstRead(I2C_HandleTypeDef *hi2c, uint8_t se
  * @retval 1 if device found, 0 if not found
  */
 uint8_t ICM20948_isI2cAddress1(I2C_HandleTypeDef *hi2c) {
-    HAL_StatusTypeDef addressStatus = HAL_I2C_IsDeviceReady(hi2c, ICM20948__I2C_SLAVE_ADDRESS_1 << 1, 2, 10);
+    HAL_StatusTypeDef addressStatus = HAL_I2C_IsDeviceReady(hi2c, ICM20948__I2C_SLAVE_ADDRESS_1 << 1, 5, 50);
     return (addressStatus == HAL_OK) ? 1 : 0;
 }
 
@@ -170,7 +170,7 @@ uint8_t ICM20948_isI2cAddress1(I2C_HandleTypeDef *hi2c) {
  * @retval 1 if device found, 0 if not found
  */
 uint8_t ICM20948_isI2cAddress2(I2C_HandleTypeDef *hi2c) {
-    HAL_StatusTypeDef addressStatus = HAL_I2C_IsDeviceReady(hi2c, ICM20948__I2C_SLAVE_ADDRESS_2 << 1, 2, 10);
+    HAL_StatusTypeDef addressStatus = HAL_I2C_IsDeviceReady(hi2c, ICM20948__I2C_SLAVE_ADDRESS_2 << 1, 5, 50);
     return (addressStatus == HAL_OK) ? 1 : 0;
 }
 
