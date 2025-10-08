@@ -20,7 +20,7 @@ public class GridObstacle {
     private boolean selected; // to detect if the obstacle is being interacted with
 
     public GridObstacle(int x, int y, Facing facing) {
-        this.id = 1;
+        this.id = 0;
         this.facing = facing;
         this.target = null;
         this.position = Position.of(x, y);

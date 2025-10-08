@@ -64,6 +64,7 @@ public class CanvasActivity extends AppCompatActivity {
         canvasTouchController = new CanvasTouchController(myApp);
 
         canvasView = findViewById(R.id.canvasView);
+        canvasView.setFooterBottomMarginDp(24);
         canvasView.setGrid(myApp.grid());
         canvasView.setOnTouchListener(canvasTouchController);
 
@@ -305,10 +306,19 @@ public class CanvasActivity extends AppCompatActivity {
             canvasView.invalidate();
             receivedMessages.append("\n[image-rec] " + m.rawMsg() + "\n"); // just print on ui for now
         } else if (btMsg instanceof BluetoothMessage.RobotPositionMessage m) {
-            // update robot's pos, then invalidate ui
-            myApp.robot().updatePosition(m.x(), m.y()).updateFacing(Facing.getFacingFromCode(m.direction()));
-            robotView.invalidate();
-            receivedMessages.append("\n[location] " + m.rawMsg() + "\n"); // just print on ui for now
+            myApp.robot()
+                    .updatePosition(m.x(), m.y())
+                    .updateFacing(Facing.getFacingFromCode(m.direction()));
+
+            // IMPORTANT: redraw the grid map (and robotView if you also overlay one)
+            canvasView.invalidate();
+            robotView.invalidate(); // keep if RobotView also draws the robot
+
+            // (optional: reflect in the inputs so you see it change)
+            inputX.setText(String.valueOf(m.x()));
+            inputY.setText(String.valueOf(m.y()));
+
+            receivedMessages.append("\n[location] " + m.rawMsg() + "\n");
         }
         scrollReceivedMessages.post(() -> scrollReceivedMessages.fullScroll(View.FOCUS_DOWN));
     }

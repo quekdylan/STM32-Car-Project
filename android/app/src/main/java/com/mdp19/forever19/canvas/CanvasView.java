@@ -23,6 +23,14 @@ public class CanvasView extends View {
     private final Paint facingPaint = new Paint();
     private final Paint targetPaint = new Paint();
     private final Paint startRegionPaint = new Paint();
+    private int highlightX = -1, highlightY = -1;
+    private final Paint highlightPaint = new Paint();
+    private boolean showFooter = false;
+    private int footerX = -1, footerY = -1;
+    private int footerBottomMarginPx = 0;
+    private final Paint footerBgPaint = new Paint();
+    private final Paint footerTextPaint = new Paint();
+
     private Grid grid;
 
     public CanvasView(Context context, AttributeSet attrs) {
@@ -73,6 +81,21 @@ public class CanvasView extends View {
         startRegionPaint.setColor(Color.GREEN);
         startRegionPaint.setStrokeWidth(4);  // Make it slightly thicker
         startRegionPaint.setStyle(Paint.Style.STROKE);
+
+        // Highlight styling
+        highlightPaint.setStyle(Paint.Style.FILL);
+        highlightPaint.setColor(0x59FFD54F);
+
+        // Footer background (semi-transparent)
+        footerBgPaint.setStyle(Paint.Style.FILL);
+        footerBgPaint.setColor(0xAA000000); // ~66% black
+
+        // Footer text
+        footerTextPaint.setColor(Color.WHITE);
+        footerTextPaint.setTextAlign(Paint.Align.CENTER);
+        footerTextPaint.setFakeBoldText(true);
+        footerTextPaint.setTextSize(32);
+
     }
 
     @Override
@@ -95,7 +118,11 @@ public class CanvasView extends View {
         drawGrid(canvas);
         drawStartRegion(canvas);
         drawAxisLabels(canvas);
+        drawRowColHighlight(canvas);
         drawObstacles(canvas);
+        if (showFooter) {
+            drawCoordFooter(canvas);
+        }
     }
 
     private void drawGrid(Canvas canvas) {
@@ -176,6 +203,34 @@ public class CanvasView extends View {
         );
     }
 
+    private void drawRowColHighlight(Canvas canvas) {
+        if (highlightX < 0 || highlightY < 0) return;
+
+        int gridSize = Grid.GRID_SIZE;
+        int gridPxWidth  = gridSize * cellSize;
+        int gridPxHeight = gridSize * cellSize;
+
+        // Row rectangle (entire row at Y)
+        float rowTop = offsetY + (gridSize - 1 - highlightY) * cellSize; // flip Y once
+        canvas.drawRect(
+                offsetX,
+                rowTop,
+                offsetX + gridPxWidth,
+                rowTop + cellSize,
+                highlightPaint
+        );
+
+        // Column rectangle (entire column at X)
+        float colLeft = offsetX + highlightX * cellSize;
+        canvas.drawRect(
+                colLeft,
+                offsetY,
+                colLeft + cellSize,
+                offsetY + gridPxHeight,
+                highlightPaint
+        );
+    }
+
     private void drawObstacles(Canvas canvas) {
         int id = 1;
         for (GridObstacle gridObstacle : grid.getObstacleList()){
@@ -224,6 +279,31 @@ public class CanvasView extends View {
         }
     }
 
+    private void drawCoordFooter(Canvas c) {
+        int w = getWidth();
+        int h = getHeight();
+
+        // Bar height ~ 1 cell (with min size for small screens)
+        int barH = Math.max((int)(cellSize * 0.9f), 48);
+
+        // Background bar at the very bottom of the view
+        float left = 0;
+        float right = w;
+        float top  = h - footerBottomMarginPx - barH;
+        float bottom = h - footerBottomMarginPx;
+
+        c.drawRect(left, top, right, bottom, footerBgPaint);
+
+        // Text "(x,y)" centered in the bar
+        String label = "(" + footerX + "," + footerY + ")";
+        float textSize = Math.max(24f, cellSize * 0.45f);
+        footerTextPaint.setTextSize(textSize);
+        Paint.FontMetrics fm = footerTextPaint.getFontMetrics();
+        float textY = top + (barH - fm.bottom - fm.top) / 2f;
+
+        c.drawText(label, w / 2f, textY, footerTextPaint);
+    }
+
     public int getOffsetX() {
         return offsetX;
     }
@@ -240,4 +320,34 @@ public class CanvasView extends View {
         this.grid = grid;
         invalidate(); // Refresh the view
     }
+
+    public void setHighlightCell(int x, int y) {
+        this.highlightX = x;
+        this.highlightY = y;
+        invalidate();
+    }
+    public void clearHighlight() {
+        this.highlightX = -1;
+        this.highlightY = -1;
+        invalidate();
+    }
+
+    public void showFooterCoord(int x, int y) {
+        this.footerX = x;
+        this.footerY = y;
+        this.showFooter = true;
+        invalidate();
+    }
+
+    public void hideFooterCoord() {
+        this.showFooter = false;
+        invalidate();
+    }
+
+    public void setFooterBottomMarginDp(int dp) {
+        float d = getResources().getDisplayMetrics().density;
+        footerBottomMarginPx = (int) (dp * d);
+        invalidate();
+    }
+
 }

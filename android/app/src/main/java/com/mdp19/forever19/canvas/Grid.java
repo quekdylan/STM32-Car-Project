@@ -13,122 +13,202 @@ import java.util.Optional;
  * Logical representation / Data structure for the canvas grid.
  * <p> Contains {@link GridObstacle}s.
  */
+
 public class Grid {
-
-    private static final String TAG = "Grid";
     public static final int GRID_SIZE = 20;
-    private static int idGen = 1;
-    private final List<GridObstacle> obstacleList; // list represents obstacles currently added
 
-    public Grid() {
-        obstacleList = new ArrayList<>();
-    }
+    private final List<GridObstacle> obstacleList = new ArrayList<>();
 
-    /**
-     * Adds an obstacle to a specified position.
-     * <p> Always sets the id of the created obstacle in a incrementing fashion.
-     *
-     * @param obstacle The GridObstacle object.
-     * @return true if placed successfully, false if out of bounds or position occupied.
-     */
-    public boolean addObstacle(GridObstacle obstacle) {
-        // skip check if obstacle not alr at same position
-        obstacleList.add(obstacle);
-        obstacle.setId(idGen++); // set the id to an auto-inc id
-        Log.d(TAG, "Added obstacle: " + obstacle);
-        return true;
-    }
+    // ID management
+    private int nextId = 1;
+    private final java.util.ArrayDeque<Integer> freeIds = new java.util.ArrayDeque<>();
 
-    /**
-     * Removes an obstacle from the specified position.
-     *
-     * @return true if an obstacle was removed, false if the position was empty.
-     */
-    public boolean removeObstacle(int x, int y) {
-        Optional<GridObstacle> foundObstacle = findObstacleWithPos(x, y);
-        if (foundObstacle.isPresent()) {
-            obstacleList.remove(foundObstacle.get());
-            Log.d(TAG, "Removed obstacle: " + foundObstacle.get());
-            return true;
+    /** Add obstacle. If o.id == 0, assign (recycle first; else increment). */
+    public void addObstacle(GridObstacle o) {
+        if (o.getId() == 0) {
+            int id = freeIds.isEmpty() ? nextId++ : freeIds.pop();
+            o.setId(id);
         }
-        return false;
+        obstacleList.add(o);
     }
 
-    /**
-     * Gets the obstacle at a given position.
-     */
+    /** Remove obstacle at (x,y). Recycle its id. */
+    public void removeObstacle(int x, int y) {
+        Optional<GridObstacle> opt = findObstacleWithPos(x, y);
+        if (opt.isPresent()) {
+            GridObstacle o = opt.get();
+            freeIds.push(o.getId());       // recycle id for next add
+            obstacleList.remove(o);
+        }
+    }
+
     public Optional<GridObstacle> findObstacleWithPos(int x, int y) {
-        for (GridObstacle gridObstacle : obstacleList) {
-            if (gridObstacle.getPosition().getXInt() == x &&
-                    gridObstacle.getPosition().getYInt() == y) {
-                return Optional.of(gridObstacle);
+        for (GridObstacle ob : obstacleList) {
+            if (ob.getPosition().getXInt() == x && ob.getPosition().getYInt() == y) {
+                return Optional.of(ob);
             }
         }
         return Optional.empty();
     }
 
-    /**
-     * Gets the obstacle at a given approximate position.
-     */
     public Optional<GridObstacle> findObstacleWithApproxPos(int touchX, int touchY, int SELECTION_RADIUS) {
-        Optional<GridObstacle> nearestObstacle = Optional.empty();
-        double minDistance = SELECTION_RADIUS; // Set threshold distance
-
-        for (GridObstacle obstacle : getObstacleList()) {
-            int obsX = obstacle.getPosition().getXInt();
-            int obsY = obstacle.getPosition().getYInt();
-            double distance = Math.sqrt(Math.pow(touchX - obsX, 2) + Math.pow(touchY - obsY, 2));
-
-            if (distance < minDistance) {
-                minDistance = distance;
-                nearestObstacle = Optional.of(obstacle);
-            }
+        Optional<GridObstacle> nearest = Optional.empty();
+        double minDist = SELECTION_RADIUS;
+        for (GridObstacle ob : obstacleList) {
+            int ox = ob.getPosition().getXInt();
+            int oy = ob.getPosition().getYInt();
+            double d = Math.hypot(touchX - ox, touchY - oy);
+            if (d < minDist) { minDist = d; nearest = Optional.of(ob); }
         }
-        return nearestObstacle;
+        return nearest;
     }
 
-    /**
-     * Gets the obstacle from a given id.
-     */
     public Optional<GridObstacle> findObstacleWithId(int obstacleId) {
-        for (GridObstacle gridObstacle : obstacleList) {
-            if (gridObstacle.getId() == obstacleId) {
-                return Optional.of(gridObstacle);
-            }
+        for (GridObstacle ob : obstacleList) {
+            if (ob.getId() == obstacleId) return Optional.of(ob);
         }
         return Optional.empty();
     }
 
-    /**
-     * If there is an obstacle at (x,y), returns true
-     */
-    public boolean hasObstacle(int x, int y) {
-        return findObstacleWithPos(x, y).isPresent();
-    }
+    public boolean hasObstacle(int x, int y) { return findObstacleWithPos(x, y).isPresent(); }
 
-    /**
-     * Returns list of obstacles (mutable). For usage in {@link CanvasView}.
-     */
-    public List<GridObstacle> getObstacleList() {
-        return obstacleList;
-    }
+    public List<GridObstacle> getObstacleList() { return obstacleList; }
 
     public void updateObstacleTarget(int x, int y, int targetId) {
-        findObstacleWithPos(x, y).ifPresent(obstacle -> obstacle.setTarget(Target.of(targetId)));
+        findObstacleWithPos(x, y).ifPresent(ob -> ob.setTarget(Target.of(targetId)));
     }
 
     public void updateObstacleTarget(int obstacleId, int targetId) {
-        findObstacleWithId(obstacleId).ifPresent(obstacle -> obstacle.setTarget(Target.of(targetId)));
+        findObstacleWithId(obstacleId).ifPresent(ob -> ob.setTarget(Target.of(targetId)));
     }
 
     public boolean isInsideGrid(int x, int y) {
         return x >= 0 && x < GRID_SIZE && y >= 0 && y < GRID_SIZE;
     }
 
-    /**
-     * Clear all obstacles
-     */
     public void clear() {
         obstacleList.clear();
+        // optionally also clear ID pools if you want to restart numbering:
+        // nextId = 1; freeIds.clear();
     }
 }
+
+//public class Grid {
+//
+//    private static final String TAG = "Grid";
+//    public static final int GRID_SIZE = 20;
+//    private static int idGen = 1;
+//    private final List<GridObstacle> obstacleList; // list represents obstacles currently added
+//
+//    public Grid() {
+//        obstacleList = new ArrayList<>();
+//    }
+//
+//    /**
+//     * Adds an obstacle to a specified position.
+//     * <p> Always sets the id of the created obstacle in a incrementing fashion.
+//     *
+//     * @param obstacle The GridObstacle object.
+//     * @return true if placed successfully, false if out of bounds or position occupied.
+//     */
+//    public boolean addObstacle(GridObstacle obstacle) {
+//        // skip check if obstacle not alr at same position
+//        obstacleList.add(obstacle);
+//        obstacle.setId(idGen++); // set the id to an auto-inc id
+//        Log.d(TAG, "Added obstacle: " + obstacle);
+//        return true;
+//    }
+//
+//    /**
+//     * Removes an obstacle from the specified position.
+//     *
+//     * @return true if an obstacle was removed, false if the position was empty.
+//     */
+//    public boolean removeObstacle(int x, int y) {
+//        Optional<GridObstacle> foundObstacle = findObstacleWithPos(x, y);
+//        if (foundObstacle.isPresent()) {
+//            obstacleList.remove(foundObstacle.get());
+//            Log.d(TAG, "Removed obstacle: " + foundObstacle.get());
+//            return true;
+//        }
+//        return false;
+//    }
+//
+//    /**
+//     * Gets the obstacle at a given position.
+//     */
+//    public Optional<GridObstacle> findObstacleWithPos(int x, int y) {
+//        for (GridObstacle gridObstacle : obstacleList) {
+//            if (gridObstacle.getPosition().getXInt() == x &&
+//                    gridObstacle.getPosition().getYInt() == y) {
+//                return Optional.of(gridObstacle);
+//            }
+//        }
+//        return Optional.empty();
+//    }
+//
+//    /**
+//     * Gets the obstacle at a given approximate position.
+//     */
+//    public Optional<GridObstacle> findObstacleWithApproxPos(int touchX, int touchY, int SELECTION_RADIUS) {
+//        Optional<GridObstacle> nearestObstacle = Optional.empty();
+//        double minDistance = SELECTION_RADIUS; // Set threshold distance
+//
+//        for (GridObstacle obstacle : getObstacleList()) {
+//            int obsX = obstacle.getPosition().getXInt();
+//            int obsY = obstacle.getPosition().getYInt();
+//            double distance = Math.sqrt(Math.pow(touchX - obsX, 2) + Math.pow(touchY - obsY, 2));
+//
+//            if (distance < minDistance) {
+//                minDistance = distance;
+//                nearestObstacle = Optional.of(obstacle);
+//            }
+//        }
+//        return nearestObstacle;
+//    }
+//
+//    /**
+//     * Gets the obstacle from a given id.
+//     */
+//    public Optional<GridObstacle> findObstacleWithId(int obstacleId) {
+//        for (GridObstacle gridObstacle : obstacleList) {
+//            if (gridObstacle.getId() == obstacleId) {
+//                return Optional.of(gridObstacle);
+//            }
+//        }
+//        return Optional.empty();
+//    }
+//
+//    /**
+//     * If there is an obstacle at (x,y), returns true
+//     */
+//    public boolean hasObstacle(int x, int y) {
+//        return findObstacleWithPos(x, y).isPresent();
+//    }
+//
+//    /**
+//     * Returns list of obstacles (mutable). For usage in {@link CanvasView}.
+//     */
+//    public List<GridObstacle> getObstacleList() {
+//        return obstacleList;
+//    }
+//
+//    public void updateObstacleTarget(int x, int y, int targetId) {
+//        findObstacleWithPos(x, y).ifPresent(obstacle -> obstacle.setTarget(Target.of(targetId)));
+//    }
+//
+//    public void updateObstacleTarget(int obstacleId, int targetId) {
+//        findObstacleWithId(obstacleId).ifPresent(obstacle -> obstacle.setTarget(Target.of(targetId)));
+//    }
+//
+//    public boolean isInsideGrid(int x, int y) {
+//        return x >= 0 && x < GRID_SIZE && y >= 0 && y < GRID_SIZE;
+//    }
+//
+//    /**
+//     * Clear all obstacles
+//     */
+//    public void clear() {
+//        obstacleList.clear();
+//    }
+//}
