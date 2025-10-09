@@ -50,6 +50,10 @@ public class CanvasActivity extends AppCompatActivity {
     private RobotView robotView;
     private CanvasTouchController canvasTouchController;
     private MediaPlayer mediaPlayer;
+    private static final String PREFS = "grid_prefs";
+    private static final String KEY_LAYOUT = "grid_layout";
+    private static final String KEY_ROBOT  = "robot_pose";
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -117,6 +121,21 @@ public class CanvasActivity extends AppCompatActivity {
         startbtn.setOnClickListener(view -> {
             if (myApp.btConnection() != null) showConfirmationDialog();
         });
+
+        Button btnSaveLayout = findViewById(R.id.btnSaveLayout);
+        Button btnLoadLayout = findViewById(R.id.btnLoadLayout);
+
+        if (btnSaveLayout != null) {
+            btnSaveLayout.setOnClickListener(v -> saveLayout());
+        }
+        if (btnLoadLayout != null) {
+            btnLoadLayout.setOnClickListener(v -> {
+                loadLayout();
+                // refresh drawings after load
+                canvasView.invalidate();
+                robotView.invalidate();
+            });
+        }
 
         // Bind movement buttons
 //        findViewById(R.id.btnRobotForward).setOnClickListener(view -> {
@@ -321,5 +340,100 @@ public class CanvasActivity extends AppCompatActivity {
             receivedMessages.append("\n[location] " + m.rawMsg() + "\n");
         }
         scrollReceivedMessages.post(() -> scrollReceivedMessages.fullScroll(View.FOCUS_DOWN));
+    }
+
+    private void saveLayout() {
+        try {
+            // 1) obstacles → JSON
+            org.json.JSONArray arr = new org.json.JSONArray();
+            for (GridObstacle ob : myApp.grid().getObstacleList()) {
+                org.json.JSONObject o = new org.json.JSONObject();
+                o.put("id", ob.getId());
+                o.put("x",  ob.getPosition().getXInt());
+                o.put("y",  ob.getPosition().getYInt());
+                o.put("face", ob.getFacing().name());             // "NORTH"/"EAST"/...
+                o.put("targetStr", ob.getTarget() == null ? org.json.JSONObject.NULL : ob.getTarget().getTargetStr());
+                arr.put(o);
+            }
+
+            // 2) robot pose → JSON
+            org.json.JSONObject robot = new org.json.JSONObject();
+            robot.put("x", myApp.robot().getPosition().getXInt());
+            robot.put("y", myApp.robot().getPosition().getYInt());
+            robot.put("face", myApp.robot().getFacing().name());
+
+            // 3) save to SharedPreferences
+            android.content.SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
+            sp.edit()
+                    .putString(KEY_LAYOUT, arr.toString())
+                    .putString(KEY_ROBOT,  robot.toString())
+                    .apply();
+
+            Toast.makeText(this, "Layout saved", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "Save failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void loadLayout() {
+        try {
+            android.content.SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
+            String layout = sp.getString(KEY_LAYOUT, null);
+            String robot  = sp.getString(KEY_ROBOT,  null);
+
+            // Clear current grid
+            myApp.grid().clear();
+
+            // obstacles
+            if (layout != null) {
+                org.json.JSONArray arr = new org.json.JSONArray(layout);
+                for (int i = 0; i < arr.length(); i++) {
+                    org.json.JSONObject o = arr.getJSONObject(i);
+                    int id = o.getInt("id");
+                    int x  = o.getInt("x");
+                    int y  = o.getInt("y");
+                    String faceStr = o.optString("face", "NORTH");
+
+                    GridObstacle ob = GridObstacle.of(x, y);
+                    ob.setId(id);                   // reuse the saved ID
+                    ob.setFacing(Facing.valueOf(faceStr));
+
+                    if (!o.isNull("target")) {
+                        int tgtId = o.getInt("target");
+                        ob.setTarget(com.mdp19.forever19.Target.of(tgtId));
+                    }
+                    myApp.grid().addObstacle(ob);  // Grid will respect provided IDs
+                }
+            }
+
+            // robot
+            if (robot != null) {
+                org.json.JSONObject r = new org.json.JSONObject(robot);
+                int rx = r.optInt("x", 1);
+                int ry = r.optInt("y", 1);
+                String rFace = r.optString("face", "NORTH");
+                myApp.robot()
+                        .updatePosition(rx, ry)
+                        .updateFacing(Facing.valueOf(rFace));
+                // reflect into UI inputs if you like:
+                if (inputX != null) inputX.setText(String.valueOf(rx));
+                if (inputY != null) inputY.setText(String.valueOf(ry));
+                spinnerRobotFacing.setSelection(faceIndexFromName(rFace));
+            }
+
+            Toast.makeText(this, "Layout loaded", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "Load failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private int faceIndexFromName(String name) {
+        // assumes your spinner items are ["NORTH","EAST","SOUTH","WEST"]
+        switch (name) {
+            case "EAST":  return 1;
+            case "SOUTH": return 2;
+            case "WEST":  return 3;
+            default:      return 0;
+        }
     }
 }
