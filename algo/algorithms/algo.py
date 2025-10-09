@@ -195,8 +195,63 @@ class MazeSolver:
             # if the optimal path has been found, break the view positions loop
             if optimal_path:
                 break
-
+        
         return optimal_path, min_dist
+
+    def _combine_straight_segments(self, path: list[CellState]) -> list[CellState]:
+        """
+        Collapse consecutive straight or reversing moves (where the robot's facing/direction
+        does not change) into a single state at the end of that run. This turns
+        [(1,2),(1,3),(1,4)] into [(1,4)] when direction is constant across the run.
+
+        Rules:
+        - Keep the first state (start).
+        - For any run of consecutive states with the same direction, only keep:
+          - the first state in that run that has a screenshot (if present), otherwise
+          - the last state in the run.
+        - Always preserve states where the direction changes.
+        """
+        if not path:
+            return path
+
+        if len(path) <= 2:
+            return path.copy()
+
+        new_path: list[CellState] = [path[0]]
+        i = 1
+        n = len(path)
+
+        while i < n:
+            curr = path[i]
+            prev = new_path[-1]
+
+            # If direction is same as previous kept state, we are in a straight/reverse run
+            if curr.direction == prev.direction:
+                # Scan the run while direction stays the same
+                k = i
+                last_in_run = path[k]
+                screenshot_in_run = None
+                while k < n and path[k].direction == prev.direction:
+                    last_in_run = path[k]
+                    if path[k].screenshot_id is not None:
+                        screenshot_in_run = path[k]
+                        k += 1
+                        break
+                    k += 1
+
+                # Prefer to keep a screenshot state in the run if present, otherwise keep the last cell
+                if screenshot_in_run is not None:
+                    new_path.append(screenshot_in_run)
+                    i = k
+                else:
+                    new_path.append(last_in_run)
+                    i = k
+            else:
+                # direction changed: keep this state
+                new_path.append(curr)
+                i += 1
+
+        return new_path
 
     def _generate_paths(self, states: list[CellState]) -> None:
         """
@@ -210,7 +265,7 @@ class MazeSolver:
         """
         A* search algorithm to find the shortest path between two states
         Each state is defined by x, y, and direction.
-
+i
         Heuristic: distance f = g + h
         g: Actual distance from the start state to the current state
         h: Estimated distance from the current state to the end state
@@ -759,6 +814,59 @@ class MazeSolver:
                 obstacle_id = int(to_state.screenshot_id.split("_")[0])
                 scanned_obstacles.append(
                     self.grid.find_obstacle_by_id(obstacle_id)
-                )
+                )           
+        
+        return motion_path, obstacle_id_with_signals, scanned_obstacles      
+    def combine_straight_segments(self, path: list[CellState]) -> list[CellState]:
+        """
+        Collapse consecutive straight or reversing moves (where the robot's facing/direction
+        does not change) into a single state at the end of that run. This turns
+        [(1,2),(1,3),(1,4)] into [(1,4)] when direction is constant across the run.
 
-        return motion_path, obstacle_id_with_signals, scanned_obstacles
+        Rules:
+        - Keep the first state (start).
+        - For any run of consecutive states with the same direction, only keep:
+          - the first state in that run that has a screenshot (if present), otherwise
+          - the last state in the run.
+        - Always preserve states where the direction changes.
+        """
+        if not path:
+            return path
+
+        if len(path) <= 2:
+            return path.copy()
+
+        new_path: list[CellState] = [path[0]]
+        i = 1
+        n = len(path)
+
+        while i < n:
+            curr = path[i]
+            prev = new_path[-1]
+            # If direction is same as previous kept state, we are in a straight/reverse run
+            if curr['d']  == prev['d']:
+                # Scan the run while direction stays the same
+                k = i
+                last_in_run = path[k]
+                screenshot_in_run = None
+                while k < n and path[k]['d'] == prev['d']:
+                    last_in_run = path[k]
+                    if path[k]['s'] is not None:
+                        screenshot_in_run = path[k]
+                        k += 1
+                        break
+                    k += 1
+
+                # Prefer to keep a screenshot state in the run if present, otherwise keep the last cell
+                if screenshot_in_run is not None:
+                    new_path.append(screenshot_in_run)
+                    i = k
+                else:
+                    new_path.append(last_in_run)
+                    i = k
+            else:
+                # direction changed: keep this state
+                new_path.append(curr)
+                i += 1
+
+        return new_path

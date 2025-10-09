@@ -3,7 +3,6 @@ from algo.tools.consts import SCREENSHOT_COST, DISTANCE_COST, PADDING, TURN_PADD
 from algo.tools.movement import Direction
 from math import sqrt
 
-
 class CellState:
     """Base class for all objects on the arena, such as cells, obstacles, etc"""
 
@@ -262,7 +261,10 @@ class Grid:
         """
         Checks if given position is within bounds
         """
-        return 0 < x < self.size_x - 1 and 0 < y < self.size_y - 1
+        # allow robot center to be in the range [1, size - 2] inclusive
+        # this matches CellState.is_valid_position which allows positions
+        # up to ARENA_WIDTH - 2 / ARENA_HEIGHT - 2 (i.e. excludes outer border)
+        return 1 <= x <= self.size_x - 2 and 1 <= y <= self.size_y - 2
 
     def get_view_obstacle_positions(self) -> list[list[CellState]]:
         """

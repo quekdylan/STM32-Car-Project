@@ -9,7 +9,7 @@ ARENA_HEIGHT: int = 20
 OBSTACLE_SIZE: int = 1
 
 # no. of iterations to run algorithm for to find the most accurate shortest path
-ITERATIONS: int = 5000
+ITERATIONS: int = 2500
 
 # Cost for the chance that the robot touches an obstacle.
 # The higher the value, the less likely the robot moves too close to an obstacle.
@@ -19,7 +19,7 @@ SAFE_COST: int = 1000
 # The higher the value, the less likely the robot takes pictures from a position that is not directly in front of image.
 SCREENSHOT_COST: int = 100
 # the cost for when the robot is too close or too far from the obstacle
-DISTANCE_COST: int = 1000
+DISTANCE_COST: int = 1200
 
 # Cost of turning the robot.
 # The higher the value, the less likely the robot is to turn.
@@ -44,13 +44,13 @@ X ←----┐  .  .
 # If tuning on STM side is not possible, tune by adjusting the actual commands in `commands.py`
 # A smaller turn displacement is more ideal as it is more likely to generate a path to all obstacles.
 # 20cm x 10cm turn displacement measured from center of robot
-TURN_DISPLACEMENT: tuple[int, int] = [3, 3]
+TURN_DISPLACEMENT: tuple[int, int] = [2, 2]
 
 # offset due to position of robot's center / how many cells more the robot occupies from its center cell
 OFFSET: int = 1
 # for collision checking. minimum padding from robot to obstacle position
 TURN_PADDING: int = (OFFSET + 1) * EXPANDED_CELL
-MID_TURN_PADDING: int = (OFFSET + 1) * EXPANDED_CELL
+MID_TURN_PADDING: int = (OFFSET + 2) * EXPANDED_CELL
 PADDING: int = (OFFSET + 1) * EXPANDED_CELL
 
 # minimum number of cells away front of robot should be from obstacle in view state generation

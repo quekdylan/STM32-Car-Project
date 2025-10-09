@@ -346,7 +346,7 @@ export const AlgorithmMenu = () => {
 							setRobotStartX(validateRobotPosition(e.target.value))
 						}}
 						step={1}
-						className="w-16 h-10 text-center"
+						className="rounded-lg"
 					/>
 				</div>
 				<div>
@@ -360,7 +360,7 @@ export const AlgorithmMenu = () => {
 							setRobotStartY(validateRobotPosition(e.target.value))
 						}}
 						step={1}
-						className="w-16 h-10 text-center"
+						className="rounded-lg"
 					/>
 				</div>
 				<div>
@@ -370,7 +370,6 @@ export const AlgorithmMenu = () => {
 						onChange={(e) => {
 							setRobotStartDirection(Number(e.target.value) as Direction)
 						}}
-						className="w-30 h-10"
 					>
 						<option value={Direction.NORTH}>NORTH</option>
 						<option value={Direction.EAST}>EAST</option>
@@ -404,7 +403,7 @@ export const AlgorithmMenu = () => {
 				</Button>
 				<div className="flex justify-center items-center gap-2">
 					<input
-						className="w-16 h-10 text-center"
+						className="w-20"
 						type="number"
 						min={1}
 						onChange={(e) => {
@@ -434,10 +433,6 @@ export const AlgorithmMenu = () => {
 						<span>{showTestResults ? 'Hide Results' : 'Show Results'}</span>
 					</Button>
 				)}
-			</div>
-
-			<div className="mb-4 text-center">
-				Click on grid cell to add obstacle or change direction
 			</div>
 
 			{/* Test results table */}
