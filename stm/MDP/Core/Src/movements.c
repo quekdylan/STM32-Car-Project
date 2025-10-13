@@ -22,7 +22,7 @@ static float g_decel_dist_cm = 12.0f; // decelerate over last 12 cm
 // --- Speed Configuration ---
 // Speeds are defined in "encoder ticks per control period (10ms)".
 // You must tune these for your specific robot.
-#define V_MAX_TICKS_PER_DT (40.0f) // Max speed during cruise phase (e.g., 30 ticks / 10ms) 
+#define V_MAX_TICKS_PER_DT (50.0f) // Max speed during cruise phase (e.g., 30 ticks / 10ms) 
 #define V_MIN_TICKS_PER_DT (3.0f)  // Minimum speed to overcome static friction and ensure smooth start/stop
 
 // --- Yaw Correction ---
@@ -35,33 +35,35 @@ static float g_decel_dist_cm = 12.0f; // decelerate over last 12 cm
 
 // --- Turn Configuration ---
 // Speed for ackermann turns (encoder ticks / 10ms per wheel after scaling).
-#define TURN_BASE_TICKS_PER_DT   (20)     // base speed before inner/outer scaling
+#define TURN_BASE_TICKS_PER_DT   (24)     // base speed before inner/outer scaling
 #define TURN_YAW_TARGET_DEG      (90.0f)  // default turn angle when none provided
-#define TURN_YAW_TOLERANCE_DEG   (0.0f)   // acceptable tolerance to stop
-#define TURN_YAW_SLOW_BAND_DEG   (12.0f)  // start slowing when within this band
-#define TURN_MIN_TICKS_PER_DT    (3)      // minimum per-wheel speed while turning
+#define TURN_YAW_TOLERANCE_DEG   (0.1f)   // acceptable tolerance to stop
+#define TURN_YAW_SLOW_BAND_DEG   (8.0f)  // start slowing when within this band
+#define TURN_MIN_TICKS_PER_DT    (4)      // minimum per-wheel speed while turning
 #define STEER_SETTLE_MS_PER_UNIT (2.0f)   // estimated ms per servo command unit of travel
 
 // duration (in 100 Hz ticks) to hold/transition minimum speed at turn start to allow time for front wheels to turn
 static uint16_t g_turn_spinup_ticks = 100;
 
 // --- Arc Maneuver Configuration ---
-#define ARC_SERVO_MAG_DEG             (60.0f)
-#define ARC_MIDDLE_SERVO_MAG_DEG      (50.0f)
-#define ARC_OUTER_RATIO               (1.3f)
-#define ARC_YAW_TARGET_DEG            (35.0f)
-#define ARC_YAW_TOLERANCE_DEG         (0.0f)
-#define ARC_SLOW_BAND_DEG             (3.0f)
-#define ARC_STRAIGHTEN_DELAY_TICKS    (10U)    // hold ~100 ms after final segment to let steering settle
-#define ARC_SEGMENT_MIN_HOLD_TICKS    (20U)    // hold minimum speed for first 100 ms of each segment
+#define ARC_BASE_TICKS_PER_DT         (30)     // nominal encoder ticks/10ms during arc
+#define ARC_SERVO_MAG_DEG             (80.0f)  // outer segment steering angle
+#define ARC_MIDDLE_SERVO_MAG_DEG      (80.0f)  // middle segment steering angle
+#define ARC_OUTER_RATIO               (1.5f)   // speed multiplier for outer wheel
+#define ARC_YAW_TARGET_DEG            (42.0f)  // yaw goal per arc leg
+#define ARC_YAW_TOLERANCE_DEG         (0.1f)   // yaw tolerance before switching segments
+#define ARC_SLOW_BAND_DEG             (6.0f)   // yaw error band for slowing down
+#define ARC_STRAIGHTEN_DELAY_TICKS    (10U)    // hold straight after final segment
+#define ARC_SEGMENT_MIN_HOLD_TICKS    (35U)    // keep minimum speed at segment start
 
 // --- Drive until obstacle configuration ---
-#define DRIVE_OBS_DEFAULT_THRESHOLD_CM     (30.0f)
-#define DRIVE_OBS_DEFAULT_MAX_DIST_CM      (300.0f)
-#define DRIVE_OBS_SLOW_DISTANCE_CM         (10.0f)
-#define DRIVE_OBS_STOP_TOLERANCE_CM        (0.2f)
-#define DRIVE_OBS_SAMPLE_INTERVAL_TICKS    (4U)
-#define DRIVE_OBS_TRIGGER_DELAY_MS         (40U)
+#define DRIVE_OBS_TICKS_PER_DT             (40)    // nominal speed while approaching obstacle
+#define DRIVE_OBS_DEFAULT_THRESHOLD_CM     (30.0f) // fallback stop distance
+#define DRIVE_OBS_DEFAULT_MAX_DIST_CM      (300.0f) // max travel before abort
+#define DRIVE_OBS_SLOW_DISTANCE_CM         (15.0f) // begin slowing within this range
+#define DRIVE_OBS_STOP_TOLERANCE_CM        (0.2f)  // acceptable distance error
+#define DRIVE_OBS_SAMPLE_INTERVAL_TICKS    (4U)    // ultrasonic sampling interval
+#define DRIVE_OBS_TRIGGER_DELAY_MS         (40U)   // wait after trigger before read
 
 // --- Post-turn steering stabilization ---
 #define SERVO_POST_TURN_RIGHT_US         (1600U) // apply slight right bias after finishing a left turn
@@ -73,7 +75,7 @@ static uint16_t g_turn_spinup_ticks = 100;
 
 // 30cm turn radius
 #define TURN_PROFILE_PRIMARY_STEER_MAG      (95.9f)
-#define TURN_PROFILE_PRIMARY_OUTER_RATIO    (1.35f)
+#define TURN_PROFILE_PRIMARY_OUTER_RATIO    (1.5f)
 
 //20cm turn radius
 #define TURN_PROFILE_SECONDARY_STEER_MAG    (100.0f)
@@ -411,7 +413,7 @@ void move_start_arc(move_arc_side_e side)
   ms.steer_cmd = ms.arc.servo_cmds[0];
   Servo_WriteAngle(&global_steer, ms.steer_cmd);
 
-  control_set_target_ticks_per_dt(TURN_BASE_TICKS_PER_DT, TURN_BASE_TICKS_PER_DT);
+  control_set_target_ticks_per_dt(ARC_BASE_TICKS_PER_DT, ARC_BASE_TICKS_PER_DT);
   ms.active = 1U;
 }
 
@@ -435,9 +437,9 @@ void move_drive_until_obstacle(float stop_threshold_cm, void (*service_hook)(voi
   int32_t prev_right = motor_get_right_encoder_counts();
   float travelled_cm = 0.0f;
   uint8_t sample_counter = 0U;
+  int32_t dir_sign = 0;
 
-  control_set_target_ticks_per_dt((int32_t)lroundf(V_MAX_TICKS_PER_DT),
-                                  (int32_t)lroundf(V_MAX_TICKS_PER_DT));
+  control_set_target_ticks_per_dt(0, 0);
 
   while (1) {
     osDelay(10);
@@ -475,28 +477,53 @@ void move_drive_until_obstacle(float stop_threshold_cm, void (*service_hook)(voi
     }
 
     float delta_cm = distance - target_threshold_cm;
-    if (delta_cm <= DRIVE_OBS_STOP_TOLERANCE_CM) {
+    if (dir_sign == 0) {
+      if (fabsf(delta_cm) <= DRIVE_OBS_STOP_TOLERANCE_CM) {
+        break;
+      }
+      dir_sign = (delta_cm > 0.0f) ? +1 : -1;
+    }
+
+    if ((dir_sign > 0 && delta_cm <= DRIVE_OBS_STOP_TOLERANCE_CM) ||
+        (dir_sign < 0 && delta_cm >= -DRIVE_OBS_STOP_TOLERANCE_CM)) {
       break;
     }
 
+    float distance_to_threshold = fabsf(delta_cm);
+
     float commanded_ticks;
-    if (delta_cm <= DRIVE_OBS_SLOW_DISTANCE_CM) {
-      float ratio = delta_cm / DRIVE_OBS_SLOW_DISTANCE_CM;
+    if (distance_to_threshold <= DRIVE_OBS_SLOW_DISTANCE_CM) {
+      float ratio = distance_to_threshold / DRIVE_OBS_SLOW_DISTANCE_CM;
       if (ratio < 0.0f) ratio = 0.0f;
-      commanded_ticks = TURN_BASE_TICKS_PER_DT + (V_MAX_TICKS_PER_DT - TURN_BASE_TICKS_PER_DT) * ratio;
+      if (ratio > 1.0f) ratio = 1.0f;
+      commanded_ticks = V_MIN_TICKS_PER_DT +
+                        ((float)DRIVE_OBS_TICKS_PER_DT - V_MIN_TICKS_PER_DT) * ratio;
     } else {
-      commanded_ticks = V_MAX_TICKS_PER_DT;
+      commanded_ticks = (float)DRIVE_OBS_TICKS_PER_DT;
     }
 
-    if (commanded_ticks < (float)TURN_BASE_TICKS_PER_DT) {
-      commanded_ticks = (float)TURN_BASE_TICKS_PER_DT;
+    if (commanded_ticks < (float)V_MIN_TICKS_PER_DT) {
+      commanded_ticks = (float)V_MIN_TICKS_PER_DT;
+    }
+    if (commanded_ticks > (float)DRIVE_OBS_TICKS_PER_DT) {
+      commanded_ticks = (float)DRIVE_OBS_TICKS_PER_DT;
     }
 
     int32_t base_ticks = (int32_t)lroundf(commanded_ticks);
+    if (base_ticks < V_MIN_TICKS_PER_DT) {
+      base_ticks = V_MIN_TICKS_PER_DT;
+    }
+    if (base_ticks > DRIVE_OBS_TICKS_PER_DT) {
+      base_ticks = DRIVE_OBS_TICKS_PER_DT;
+    }
+    base_ticks *= dir_sign;
     float current_yaw = imu_get_yaw();
     float filtered_yaw = yaw_filter_apply(current_yaw);
     int32_t yaw_bias = (int32_t)lroundf(-filtered_yaw * YAW_KP_TICKS_PER_DEG);
-    int32_t max_bias = base_ticks / 2;
+    if (dir_sign < 0) {
+      yaw_bias = -yaw_bias;
+    }
+    int32_t max_bias = abs(base_ticks) / 2;
     if (yaw_bias > max_bias) yaw_bias = max_bias;
     if (yaw_bias < -max_bias) yaw_bias = -max_bias;
 
@@ -506,8 +533,8 @@ void move_drive_until_obstacle(float stop_threshold_cm, void (*service_hook)(voi
     control_set_target_ticks_per_dt(left_ticks, right_ticks);
   }
 
+  motor_brake_ms(200);
   control_set_target_ticks_per_dt(0, 0);
-  motor_brake_ms(50);
   motor_stop();
   Servo_Center(&global_steer);
 }
@@ -652,18 +679,18 @@ void move_tick_100Hz(void) {
     ms.steer_cmd = servo_cmd;
     Servo_WriteAngle(&global_steer, servo_cmd);
 
-    float base_float = (float)TURN_BASE_TICKS_PER_DT;
+    float base_float = (float)ARC_BASE_TICKS_PER_DT;
     float yaw_error = fabsf(target - current_yaw);
     if (yaw_error < ARC_SLOW_BAND_DEG) {
       float ratio = yaw_error / ARC_SLOW_BAND_DEG;
       base_float = (float)TURN_MIN_TICKS_PER_DT +
-                   ((float)TURN_BASE_TICKS_PER_DT - (float)TURN_MIN_TICKS_PER_DT) * ratio;
+                   ((float)ARC_BASE_TICKS_PER_DT - (float)TURN_MIN_TICKS_PER_DT) * ratio;
       if (base_float < (float)TURN_MIN_TICKS_PER_DT) {
         base_float = (float)TURN_MIN_TICKS_PER_DT;
       }
     }
 
-    if (ms.arc.segment_hold_ticks > 0U && idx < 2U) {
+    if (ms.arc.segment_hold_ticks > 0U) {
       base_float = (float)TURN_MIN_TICKS_PER_DT;
       ms.arc.segment_hold_ticks--;
     }
@@ -708,7 +735,7 @@ void move_tick_100Hz(void) {
       if (ms.arc.segment_index < 2U) {
         ms.arc.segment_hold_ticks = ARC_SEGMENT_MIN_HOLD_TICKS;
       } else if (ms.arc.segment_index == 2U) {
-        ms.arc.segment_hold_ticks = 0U;
+        ms.arc.segment_hold_ticks = ARC_SEGMENT_MIN_HOLD_TICKS;
       } else {
         Servo_Center(&global_steer);
         ms.steer_cmd = 0.0f;

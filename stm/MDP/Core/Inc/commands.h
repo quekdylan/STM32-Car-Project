@@ -37,7 +37,7 @@ extern "C" {
 #define CMD_RCV 'r'               // acknowledgement: received
 #define CMD_FIN 'f'               // acknowledgement: finished
 
-#define COMMAND_MAX_STRING_LEN 64U
+#define COMMAND_MAX_STRING_LEN 128U
 
 typedef enum {
     COMMAND_OP_INVALID = 0,

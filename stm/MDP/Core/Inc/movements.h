@@ -7,6 +7,11 @@ typedef enum {
   MOVE_TURN_PROFILE_SECONDARY = 1
 } move_turn_profile_e;
 
+typedef enum {
+  MOVE_ARC_SIDE_LEFT  = -1,
+  MOVE_ARC_SIDE_RIGHT = +1
+} move_arc_side_e;
+
 // Start a straight movement for the given distance in centimeters.
 // Positive = forward, Negative = backward.
 void move_start_straight(float distance_cm);
@@ -24,6 +29,12 @@ void move_start_fast_turn(char dir);
 // angle_deg: desired turn angle in degrees.
 void move_start_fast_turn_angle(char dir, float angle_deg);
 
+// Start an arc maneuver around a fixed obstacle. Side selects left/right bypass.
+void move_start_arc(move_arc_side_e side);
+
+// Drive forward until ultrasonic distance falls below the provided threshold or max distance.
+// Optional service hook (e.g. to poll serial) is called inside the loop; pass NULL if unused.
+void move_drive_until_obstacle(float stop_threshold_cm, void (*service_hook)(void));
 
 // Abort an ongoing move and stop motors immediately.
 void move_abort(void);

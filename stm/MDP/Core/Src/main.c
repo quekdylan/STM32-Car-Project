@@ -43,13 +43,14 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-#define UART_CMD_BUF_SIZE 64U
-#define UART_RING_BUFFER_SIZE 256U
+#define UART_CMD_BUF_SIZE 128U
+#define UART_RING_BUFFER_SIZE 512U
 
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define ARC_DEFAULT_SIDE                MOVE_ARC_SIDE_LEFT
 
 /* USER CODE END PD */
 
@@ -130,6 +131,7 @@ static volatile uint16_t uart_ring_head = 0;
 static volatile uint16_t uart_ring_tail = 0;
 static uint8_t uart_cmd_buffer[UART_CMD_BUF_SIZE];
 static uint16_t uart_cmd_length = 0;
+static uint8_t uart_overflow_discard = 0; // Flag to discard bytes until next CMD_END
 
 #define GYRO_LOG_PERIOD_MS 1000U
 
@@ -175,19 +177,6 @@ static void execute_command(Command *cmd);
 static void wait_for_motion_completion(void);
 static char determine_turn_opcode(const Command *cmd);
 static uint16_t ring_advance(uint16_t index);
-typedef struct {
-  char opcode;
-  int param;
-} scripted_move_t;
-
-#define MAX_SCRIPT_STEPS 16U
-#define SCRIPT_DEFAULT_BRAKE_MS 50U
-
-// Edit this string to change the scripted sequence executed after calibration.
-static char g_instruction_plan[] = "[['T', 200]]";
-
-static size_t parse_instruction_plan(scripted_move_t *steps, size_t max_steps);
-static void run_instruction_plan(void);
 
 /* USER CODE END PFP */
 
@@ -227,56 +216,6 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
   }
 }
 
-static size_t parse_instruction_plan(scripted_move_t *steps, size_t max_steps)
-{
-  size_t count = 0U;
-  const char *cursor = g_instruction_plan;
-
-  while (*cursor != '\0' && count < max_steps) {
-    while (*cursor != '\0' && *cursor != '\'' && *cursor != '"') {
-      cursor++;
-    }
-
-    if (*cursor == '\0' || cursor[1] == '\0') {
-      break;
-    }
-
-    char quote_char = *cursor;
-    char opcode = cursor[1];
-    const char *closing = strchr(cursor + 2, quote_char);
-    if (!closing) {
-      break;
-    }
-
-    const char *num_start = closing + 1;
-    while (*num_start != '\0' && *num_start != '-' && !isdigit((unsigned char)*num_start)) {
-      if (*num_start == '[') {
-        break;
-      }
-      num_start++;
-    }
-
-    if (*num_start == '\0' || *num_start == '[') {
-      cursor = closing + 1;
-      continue;
-    }
-
-    char *end_ptr = NULL;
-    long value = strtol(num_start, &end_ptr, 10);
-    if (end_ptr == num_start) {
-      cursor = closing + 1;
-      continue;
-    }
-
-    steps[count].opcode = opcode;
-    steps[count].param = (int)value;
-    count++;
-    cursor = end_ptr;
-  }
-
-  return count;
-}
-
 static void configure_servo_for_motion(void)
 {
   uint32_t pclk2 = HAL_RCC_GetPCLK2Freq();
@@ -295,12 +234,14 @@ static void configure_servo_for_motion(void)
 
 static void perform_initial_calibration(void)
 {
-  g_is_calibrating = 1;
-  osDelay(1000);
+  g_is_calibrating = 1U;
   motor_stop();
-  imu_calibrate_bias_blocking(1000);
+
+  const int sample_count = 4000; // ~45 s @ 2 ms per sample
+  imu_calibrate_bias_blocking(sample_count);
+
   imu_zero_yaw();
-  g_is_calibrating = 0;
+  g_is_calibrating = 0U;
 
   g_gyro_log.yaw_unwrapped_deg = 0.0f;
   g_gyro_log.prev_yaw_deg = 0.0f;
@@ -317,9 +258,6 @@ static void perform_first_uart_calibration(void)
 
   g_is_calibrating = 1U;
   osDelay(100);
-
-  const int sample_count = 2000; // 4 seconds @ 2 ms per sample
-  imu_calibrate_bias_blocking(sample_count);
   imu_zero_yaw();
 
   g_is_calibrating = 0U;
@@ -336,40 +274,6 @@ static void reset_motion_state(void)
   g_current_instr = 0;
 }
 
-static void run_instruction_plan(void)
-{
-  scripted_move_t steps[MAX_SCRIPT_STEPS];
-  size_t step_count = parse_instruction_plan(steps, MAX_SCRIPT_STEPS);
-
-  for (size_t i = 0; i < step_count; ++i) {
-    char opcode = steps[i].opcode;
-    int param = steps[i].param;
-
-    if (opcode == CMD_FORWARD_DIST_TARGET || opcode == CMD_BACKWARD_DIST_TARGET) {
-      float distance_cm = (opcode == CMD_BACKWARD_DIST_TARGET) ? -fabsf((float)param) : fabsf((float)param);
-      char dbg[48];
-      (void)snprintf(dbg, sizeof(dbg), "script %c %d\r\n", opcode, param);
-      uart_send_response(dbg);
-      execute_straight_move(distance_cm, SCRIPT_DEFAULT_BRAKE_MS);
-    } else if (opcode == 'L' || opcode == 'R' || opcode == 'l' || opcode == 'r') {
-      float angle_deg = fabsf((float)param);
-      if (angle_deg <= 0.0f) {
-        angle_deg = 90.0f;
-      }
-      char dbg[48];
-      (void)snprintf(dbg, sizeof(dbg), "script turn %c %d\r\n", opcode, (int)angle_deg);
-      uart_send_response(dbg);
-      execute_turn_move(opcode, angle_deg, SCRIPT_DEFAULT_BRAKE_MS);
-    } else {
-      continue;
-    }
-
-    Servo_Center(&global_steer);
-    motor_stop();
-    osDelay(20);
-  }
-}
-
 static void execute_straight_move(float distance_cm, uint32_t brake_ms)
 {
   if (distance_cm == 0.0f) {
@@ -381,8 +285,6 @@ static void execute_straight_move(float distance_cm, uint32_t brake_ms)
   wait_for_motion_completion();
   g_current_instr = 0;
   control_set_target_ticks_per_dt(0, 0);
-  motor_brake_ms(brake_ms);
-  motor_stop();
 }
 
 static void execute_turn_move(char turn_opcode, float angle_deg, uint32_t brake_ms)
@@ -392,8 +294,6 @@ static void execute_turn_move(char turn_opcode, float angle_deg, uint32_t brake_
   wait_for_motion_completion();
   g_current_instr = 0;
   control_set_target_ticks_per_dt(0, 0);
-  motor_brake_ms(brake_ms);
-  motor_stop();
 }
 
 /* USER CODE END 0 */
@@ -445,6 +345,7 @@ ultrasonic_init(&htim12, GPIOB, GPIO_PIN_15);
 // Initialize IMU (detects 0x68/0x69, sets 2000 dps; calibration happens later)
 uint8_t icm_addrSel = 0;
 imu_init(&hi2c2, &icm_addrSel);
+imu_zero_yaw();
 
   g_gyro_log.yaw_unwrapped_deg = 0.0f;
   g_gyro_log.prev_yaw_deg = 0.0f;
@@ -1167,10 +1068,21 @@ static void process_serial_input(void)
       continue;
     }
 
+    // If we're in overflow discard mode, skip all bytes until CMD_END
+    if (uart_overflow_discard) {
+      if (byte == CMD_END) {
+        uart_overflow_discard = 0U; // Reset discard flag
+        uart_cmd_length = 0U;       // Ensure buffer is clear
+      }
+      continue; // Discard this byte
+    }
+
     if (uart_cmd_length < UART_CMD_BUF_SIZE) {
       uart_cmd_buffer[uart_cmd_length++] = byte;
     } else {
+      // Buffer overflow: discard current command and all bytes until next CMD_END
       uart_cmd_length = 0U;
+      uart_overflow_discard = 1U;
       continue;
     }
 
@@ -1273,24 +1185,14 @@ static void execute_command(Command *cmd)
       motor_stop();
       break;
 
-    case COMMAND_OP_TURN:
-    {
-      char turn_opcode = determine_turn_opcode(cmd);
-      float angle_deg = fabsf(cmd->val);
-      if (angle_deg <= 0.0f) {
-        angle_deg = fabsf(cmd->angleToSteer);
-      }
-      if (angle_deg <= 0.0f) {
-        angle_deg = 90.0f;
-      }
-
-      move_turn(turn_opcode, angle_deg);
-      wait_for_motion_completion();
-      control_set_target_ticks_per_dt(0, 0);
-      motor_brake_ms(50);
-      motor_stop();
-      break;
-    }
+  case COMMAND_OP_TURN:
+  {
+    char turn_opcode = determine_turn_opcode(cmd);
+    // Always use 90 degrees for turn commands (L90, R90, l90, r90)
+    float angle_deg = 90.0f;
+    execute_turn_move(turn_opcode, angle_deg, 50);
+    break;
+  }
 
     case COMMAND_OP_DRIVE:
       if (cmd->distType == COMMAND_DIST_TARGET) {
@@ -1384,23 +1286,26 @@ static void execute_command(Command *cmd)
 
     case COMMAND_OP_IMU_CALIBRATE:
     {
+      // SNAP command: Just ensure robot stops, no calibration needed
       move_abort();
       control_set_target_ticks_per_dt(0, 0);
       motor_brake_ms(50);
       motor_stop();
       Servo_Center(&global_steer);
 
-      g_is_calibrating = 1U;
-      osDelay(100);
+      // Acknowledgment already sent after delay in commands_process
+      // No further action needed - RPi will trigger camera
 
-      const int sample_count = 2500; // 5 seconds @ 2 ms per sample
-      imu_calibrate_bias_blocking(sample_count);
-      imu_zero_yaw();
-
-      g_is_calibrating = 0U;
-      g_gyro_log.yaw_unwrapped_deg = 0.0f;
-      g_gyro_log.prev_yaw_deg = 0.0f;
-      g_gyro_log.have_prev_sample = 0U;
+      // IMU calibration removed - not needed for SNAP/image capture
+      // g_is_calibrating = 1U;
+      // osDelay(100);
+      // const int sample_count = 2000; // ~4 seconds @ 2 ms per sample
+      // imu_calibrate_bias_blocking(sample_count);
+      // imu_zero_yaw();
+      // g_is_calibrating = 0U;
+      // g_gyro_log.yaw_unwrapped_deg = 0.0f;
+      // g_gyro_log.prev_yaw_deg = 0.0f;
+      // g_gyro_log.have_prev_sample = 0U;
       break;
     }
 
@@ -1433,53 +1338,41 @@ void StartDefaultTask(void *argument)
   configure_servo_for_motion();
   reset_motion_state();
 
+  perform_initial_calibration();
+
   uint8_t prev_button_state = user_is_pressed();
-  uint8_t run_plan_pending = 0U;
-  uint8_t did_initial_calibration = 0U;
 
   for(;;) {
     process_serial_input();
 
     uint8_t button_state = user_is_pressed();
     if (!prev_button_state && button_state) {
-      run_plan_pending = 1U;
-    }
-    prev_button_state = button_state;
-
-    if (run_plan_pending && !move_is_active()) {
-      if (!did_initial_calibration) {
-        perform_initial_calibration();
-        reset_motion_state();
-        did_initial_calibration = 1U;
-      }
-
-      run_instruction_plan();
+      move_drive_until_obstacle(30.0f, process_serial_input);
+      process_serial_input();
+      move_start_arc(ARC_DEFAULT_SIDE);
+      wait_for_motion_completion();
       reset_motion_state();
-      run_plan_pending = 0U;
-      continue;
-    }
-
-    if (move_is_active()) {
-      osDelay(5);
-      continue;
+      process_serial_input();
+      move_drive_until_obstacle(30.0f, process_serial_input);
+      process_serial_input();
+      move_turn('L', 0.0f);
+      wait_for_motion_completion();
+      reset_motion_state();
+      process_serial_input();
+      move_start_straight(-30.0f);
+      wait_for_motion_completion();
+      reset_motion_state();
+      
     }
 
     Command *cmd = commands_pop();
-    if (cmd == NULL) {
-      osDelay(5);
-      continue;
+    if (cmd != NULL) {
+      // Clear any queued commands to keep UART responsive during demo mode
+      commands_end(&huart3, cmd);
     }
 
-    if (!g_uart_initial_calibration_done) {
-      g_uart_initial_calibration_done = 1U;
-      perform_first_uart_calibration();
-      process_serial_input();
-    }
-
-    execute_command(cmd);
-    commands_end(&huart3, cmd);
-    process_serial_input();
-    osDelay(5);
+    prev_button_state = button_state;
+    osDelay(10);
   }
   /* USER CODE END 5 */
 }
@@ -1606,10 +1499,48 @@ void oled_task(void *argument)
 void uart_task(void *argument)
 {
   /* USER CODE BEGIN uart_task */
-  /* Infinite loop */
+  (void)argument;
+
+  uint8_t header_sent = 0U;
+  const uint32_t period_ms = 50U; // TEMP: yaw streaming cadence
+  uint32_t last_send_ms = 0U;
+
   for(;;)
   {
-    osDelay(1);
+    process_serial_input();
+
+    uint32_t now = HAL_GetTick();
+    if (!header_sent)
+    {
+      uart_send_response("#channel init yaw_deg\r\n");
+      header_sent = 1U;
+      last_send_ms = now;
+    }
+
+    // if ((uint32_t)(now - last_send_ms) >= period_ms)
+    // {
+    //   last_send_ms = now;
+
+    //   float yaw_deg = imu_get_yaw();
+    //   long yaw_mdeg = lroundf(yaw_deg * 1000.0f);
+    //   long abs_mdeg = (yaw_mdeg < 0) ? -yaw_mdeg : yaw_mdeg;
+    //   long whole = abs_mdeg / 1000L;
+    //   long frac = abs_mdeg % 1000L;
+
+    //   char line[32];
+    //   int len;
+    //   if (yaw_mdeg < 0) {
+    //     len = snprintf(line, sizeof(line), "-%ld.%03ld\r\n", whole, frac);
+    //   } else {
+    //     len = snprintf(line, sizeof(line), "%ld.%03ld\r\n", whole, frac);
+    //   }
+
+    //   if (len > 0 && len < (int)sizeof(line)) {
+    //     uart_send_response(line);
+    //   }
+    // }
+
+    osDelay(5);
   }
   /* USER CODE END uart_task */
 }
