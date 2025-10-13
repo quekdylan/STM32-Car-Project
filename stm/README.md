@@ -31,17 +31,18 @@ The following table lists all configurable parameters in the codebase:
 | `g_accel_dist_cm` | Acceleration distance (cm) | `MDP/Core/Src/movements.c:16` | `10.0f` |
 | `g_decel_dist_cm` | Deceleration distance (cm) | `MDP/Core/Src/movements.c:17` | `15.0f` |
 | **Turn Control** |
-| `TURN_BASE_TICKS_PER_DT` | Base speed for turns (ticks/10ms) | `MDP/Core/Src/movements.c:33` | `12` |
+| `TURN_BASE_TICKS_PER_DT` | Base speed for turns (ticks/10ms) | `MDP/Core/Src/movements.c:33` | `25` |
 | `TURN_YAW_TARGET_DEG` | Target turn angle (degrees) | `MDP/Core/Src/movements.c:34` | `90.0f` |
 | `TURN_YAW_TOLERANCE_DEG` | Turn completion tolerance | `MDP/Core/Src/movements.c:35` | `0.5f` |
 | `TURN_YAW_SLOW_BAND_DEG` | Deceleration zone for turns | `MDP/Core/Src/movements.c:36` | `10.0f` |
 | `TURN_MIN_TICKS_PER_DT` | Minimum turn speed | `MDP/Core/Src/movements.c:37` | `4` |
 | `g_turn_spinup_ticks` | Turn startup delay (100Hz ticks) | `MDP/Core/Src/movements.c:39` | `100` |
-| **Robot Geometry** |
-| `WHEELBASE_CM` | Distance between front and rear axles | `MDP/Core/Src/movements.c:42` | `14.5f` |
-| `TRACK_WIDTH_CM` | Distance between left and right wheels | `MDP/Core/Src/movements.c:43` | `16.5f` |
-| `STEER_MAX_DEG` | Maximum steering angle | `MDP/Core/Src/movements.c:45` | `30.0f` |
-| `STEER_ANGLE_MAG` | Servo command magnitude for turns | `MDP/Core/Src/movements.c:48` | `100.0f` |
+| **Turn Differential** |
+| `TURN_DEFAULT_PROFILE` | Default turn profile applied at startup | `MDP/Core/Src/movements.c:45` | `MOVE_TURN_PROFILE_PRIMARY` |
+| `TURN_PROFILE_PRIMARY_STEER_MAG` | Servo command magnitude for primary turn profile | `MDP/Core/Src/movements.c:46` | `90.9f` |
+| `TURN_PROFILE_PRIMARY_OUTER_RATIO` | Outer-wheel speed multiplier for primary turn profile | `MDP/Core/Src/movements.c:47` | `1.759f` |
+| `TURN_PROFILE_SECONDARY_STEER_MAG` | Servo command magnitude for alternate turn profile | `MDP/Core/Src/movements.c:49` | `100.0f` |
+| `TURN_PROFILE_SECONDARY_OUTER_RATIO` | Outer-wheel speed multiplier for alternate turn profile | `MDP/Core/Src/movements.c:50` | `2.0f` |
 | `WHEEL_CIRC_CM` | Wheel circumference | `MDP/Core/Src/movements.c:55` | `20.73f` |
 | `COUNTS_PER_REV` | Encoder counts per wheel revolution | `MDP/Core/Src/movements.c:56` | `1560.0f` |
 | **IMU Settings** |

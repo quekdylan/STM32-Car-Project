@@ -8,12 +8,15 @@
 // Writes detected address to out_addrSel if non-NULL.
 void imu_init(I2C_HandleTypeDef *hi2c, uint8_t *out_addrSel);
 
+// Returns 1 if the IMU was detected during initialization.
+uint8_t imu_is_available(void);
+
 // Blocking gyro bias calibration (~2 s of samples). Call when the robot is
 // stationary; yaw is zeroed after calibration so future deltas are relative to
 // the calibrated heading.
-void imu_calibrate_bias_blocking(void);
+void imu_calibrate_bias_blocking(int sample_count);
 
-// Call at 100 Hz: reads gyro Z and integrates yaw (degrees, [-180,180]).
+// Call from a 100 Hz scheduler; internally decimates gyro updates to 50 Hz.
 void imu_update_yaw_100Hz(void);
 
 // Get current yaw in degrees.
@@ -35,5 +38,15 @@ int imu_read_temperature_c(float *temp_c);
 
 // Read magnetometer heading (degrees 0-359) using raw mag X/Y; returns 0 on success, non-zero on failure.
 int imu_read_mag_heading_deg(float *heading_deg);
+
+// Get current gyro bias in deg/s
+float imu_get_gyro_bias(void);
+
+// Manually set gyro bias (useful for known drift measurements)
+void imu_set_gyro_bias(float bias_dps);
+
+// Gyro scale factor functions
+float imu_get_scale_factor(void);
+void imu_set_scale_factor(float scale);
 
 #endif /* INC_IMU_H_ */

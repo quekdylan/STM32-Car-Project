@@ -30,15 +30,21 @@
 #include "motor.h"
 #include "pid.h"
 #include "movements.h"
-
-#include <stdio.h>   // for snprintf
+#include "sensor.h"
+#include "commands.h"
+#include <stdio.h>
 #include <string.h>  // for strlen
-#include <math.h>    // for fabs
+#include <math.h>
+#include <ctype.h>
+#include <stdlib.h>
+#include <limits.h>
 #include "imu.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+#define UART_CMD_BUF_SIZE 64U
+#define UART_RING_BUFFER_SIZE 256U
 
 /* USER CODE END PTD */
 
@@ -86,19 +92,57 @@ const osThreadAttr_t oledTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
+/* Definitions for UART_task */
+osThreadId_t UART_taskHandle;
+const osThreadAttr_t UART_task_attributes = {
+  .name = "UART_task",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* USER CODE BEGIN PV */
 // Global servo object for use by defaultTask
 Servo global_steer;
 
-// Current high-level instruction being executed (e.g., 'S','L','R','s','r').
+// Current high-level instruction being executed (e.g., 'T','t','L','R','l','r').
 // 0 means none; shown as '-' on OLED.
 volatile char g_current_instr = 0;
 
-// Latched when the user presses the start button to begin the run sequence.
-volatile uint8_t g_user_start_requested = 0;
-
 // Flag while the IMU is undergoing calibration so the UI can show status.
 volatile uint8_t g_is_calibrating = 0;
+
+// Ensure the first UART command triggers a one-time IMU calibration.
+static uint8_t g_uart_initial_calibration_done = 0U;
+
+// Servo calibration results
+volatile float g_left_avg_rate = 0.0f; // Store left turn average rate
+volatile float g_right_avg_rate = 0.0f; // Store right turn average rate
+volatile uint8_t g_show_results = 0; // Flag to show results on next button press
+
+// Current servo center position for display
+volatile uint16_t g_current_servo_pos = SERVO_CENTER_US;
+
+// Last UART character received (for OLED display)
+volatile uint8_t g_uart_last_char = 0;
+volatile uint8_t g_uart_char_valid = 0;
+
+static uint8_t uart_ring_buffer[UART_RING_BUFFER_SIZE];
+static volatile uint16_t uart_ring_head = 0;
+static volatile uint16_t uart_ring_tail = 0;
+static uint8_t uart_cmd_buffer[UART_CMD_BUF_SIZE];
+static uint16_t uart_cmd_length = 0;
+
+#define GYRO_LOG_PERIOD_MS 1000U
+
+typedef struct {
+  uint8_t have_prev_sample;
+  float   yaw_unwrapped_deg;
+  float   prev_yaw_deg;
+} gyro_log_state_t;
+
+static gyro_log_state_t g_gyro_log = {0};
+
+
+
 
 
 /* USER CODE END PV */
@@ -118,8 +162,32 @@ static void MX_TIM12_Init(void);
 void StartDefaultTask(void *argument);
 void control_task(void *argument);
 void oled_task(void *argument);
+void uart_task(void *argument);
 
 /* USER CODE BEGIN PFP */
+static void execute_straight_move(float distance_cm, uint32_t brake_ms);
+static void execute_turn_move(char turn_opcode, float angle_deg, uint32_t brake_ms);
+static void configure_servo_for_motion(void);
+static void perform_initial_calibration(void);
+static void perform_first_uart_calibration(void);
+static void process_serial_input(void);
+static void execute_command(Command *cmd);
+static void wait_for_motion_completion(void);
+static char determine_turn_opcode(const Command *cmd);
+static uint16_t ring_advance(uint16_t index);
+typedef struct {
+  char opcode;
+  int param;
+} scripted_move_t;
+
+#define MAX_SCRIPT_STEPS 16U
+#define SCRIPT_DEFAULT_BRAKE_MS 50U
+
+// Script executed when the user button is pressed; mixes straights and turns.
+static char g_instruction_plan[] = "[['R', 90] ,['R', 90] ,['R', 90], ['R', 90] ,['R', 90] ,['R', 90] ,['R', 90],['R', 90]]";
+
+static size_t parse_instruction_plan(scripted_move_t *steps, size_t max_steps);
+static void run_instruction_plan(void);
 
 /* USER CODE END PFP */
 
@@ -128,18 +196,203 @@ void oled_task(void *argument);
 // UART3 RX byte buffer (interrupt-driven)
 static uint8_t uart3_rx_byte = 0;
 
-// Map instruction characters to descriptive OLED strings.
-static const char *instruction_to_text(char instr)
+static void uart_send_response(const char *msg);
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-  switch (instr) {
-    case 'S': return "Forward";
-    case 's': return "Reverse";
-    case 'L': return "Left turn";
-    case 'R': return "Right turn";
-    case 'l': return "Reverse Left";
-    case 'r': return "Reverse Right";
-    default:  return "Unknown";
+  if (huart->Instance == USART3)
+  {
+    uint16_t next = ring_advance(uart_ring_head);
+    if (next == uart_ring_tail) {
+      uart_ring_tail = ring_advance(uart_ring_tail);
+    }
+
+    uart_ring_buffer[uart_ring_head] = uart3_rx_byte;
+    uart_ring_head = next;
+
+    if (isprint((unsigned char)uart3_rx_byte)) {
+      g_uart_last_char = (uint8_t)uart3_rx_byte;
+      g_uart_char_valid = 1U;
+    }
+
+    HAL_UART_Receive_IT(&huart3, &uart3_rx_byte, 1);
   }
+}
+
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+  if (huart->Instance == USART3) {
+    uart_cmd_length = 0U;
+    (void)HAL_UART_Receive_IT(&huart3, &uart3_rx_byte, 1);
+  }
+}
+
+static size_t parse_instruction_plan(scripted_move_t *steps, size_t max_steps)
+{
+  size_t count = 0U;
+  const char *cursor = g_instruction_plan;
+
+  while (*cursor != '\0' && count < max_steps) {
+    while (*cursor != '\0' && *cursor != '\'' && *cursor != '"') {
+      cursor++;
+    }
+
+    if (*cursor == '\0' || cursor[1] == '\0') {
+      break;
+    }
+
+    char quote_char = *cursor;
+    char opcode = cursor[1];
+    const char *closing = strchr(cursor + 2, quote_char);
+    if (!closing) {
+      break;
+    }
+
+    const char *num_start = closing + 1;
+    while (*num_start != '\0' && *num_start != '-' && !isdigit((unsigned char)*num_start)) {
+      if (*num_start == '[') {
+        break;
+      }
+      num_start++;
+    }
+
+    if (*num_start == '\0' || *num_start == '[') {
+      cursor = closing + 1;
+      continue;
+    }
+
+    char *end_ptr = NULL;
+    long value = strtol(num_start, &end_ptr, 10);
+    if (end_ptr == num_start) {
+      cursor = closing + 1;
+      continue;
+    }
+
+    steps[count].opcode = opcode;
+    steps[count].param = (int)value;
+    count++;
+    cursor = end_ptr;
+  }
+
+  return count;
+}
+
+static void configure_servo_for_motion(void)
+{
+  uint32_t pclk2 = HAL_RCC_GetPCLK2Freq();
+  uint32_t timclk = pclk2; // APB2 prescaler = 1
+  float tick_us = ((float)(htim8.Init.Prescaler + 1U)) * (1000000.0f / (float)timclk);
+
+  Servo_Attach(&global_steer, &htim8, TIM_CHANNEL_1, tick_us,
+               SERVO_LEFT_LIMIT_US, SERVO_CENTER_US, SERVO_RIGHT_LIMIT_US);
+
+  if (Servo_Start(&global_steer) != HAL_OK) {
+    for(;;) { osDelay(1000); }
+  }
+
+  Servo_Center(&global_steer);
+}
+
+static void perform_initial_calibration(void)
+{
+  g_is_calibrating = 1U;
+  motor_stop();
+
+  const int sample_count = 20000; // ~30 s @ 2 ms per sample
+  imu_calibrate_bias_blocking(sample_count);
+
+  imu_zero_yaw();
+  g_is_calibrating = 0U;
+
+  g_gyro_log.yaw_unwrapped_deg = 0.0f;
+  g_gyro_log.prev_yaw_deg = 0.0f;
+  g_gyro_log.have_prev_sample = 0U;
+}
+
+static void perform_first_uart_calibration(void)
+{
+  move_abort();
+  control_set_target_ticks_per_dt(0, 0);
+  motor_brake_ms(50);
+  motor_stop();
+  Servo_Center(&global_steer);
+
+  g_is_calibrating = 1U;
+  osDelay(100);
+  imu_zero_yaw();
+
+  g_is_calibrating = 0U;
+  g_gyro_log.yaw_unwrapped_deg = 0.0f;
+  g_gyro_log.prev_yaw_deg = 0.0f;
+  g_gyro_log.have_prev_sample = 0U;
+}
+
+static void reset_motion_state(void)
+{
+  Servo_Center(&global_steer);
+  control_set_target_ticks_per_dt(0, 0);
+  motor_stop();
+  g_current_instr = 0;
+}
+
+static void run_instruction_plan(void)
+{
+  scripted_move_t steps[MAX_SCRIPT_STEPS];
+  size_t step_count = parse_instruction_plan(steps, MAX_SCRIPT_STEPS);
+
+  for (size_t i = 0; i < step_count; ++i) {
+    char opcode = steps[i].opcode;
+    int param = steps[i].param;
+
+    if (opcode == CMD_FORWARD_DIST_TARGET || opcode == CMD_BACKWARD_DIST_TARGET) {
+      float distance_cm = (opcode == CMD_BACKWARD_DIST_TARGET) ? -fabsf((float)param) : fabsf((float)param);
+      char dbg[48];
+      (void)snprintf(dbg, sizeof(dbg), "script %c %d\r\n", opcode, param);
+      uart_send_response(dbg);
+      execute_straight_move(distance_cm, SCRIPT_DEFAULT_BRAKE_MS);
+    } else if (opcode == 'L' || opcode == 'R' || opcode == 'l' || opcode == 'r') {
+      float angle_deg = fabsf((float)param);
+      if (angle_deg <= 0.0f) {
+        angle_deg = 90.0f;
+      }
+      char dbg[48];
+      (void)snprintf(dbg, sizeof(dbg), "script turn %c %d\r\n", opcode, (int)angle_deg);
+      uart_send_response(dbg);
+      execute_turn_move(opcode, angle_deg, SCRIPT_DEFAULT_BRAKE_MS);
+    } else {
+      continue;
+    }
+
+    Servo_Center(&global_steer);
+    motor_stop();
+    osDelay(20);
+  }
+}
+
+static void execute_straight_move(float distance_cm, uint32_t brake_ms)
+{
+  if (distance_cm == 0.0f) {
+    return;
+  }
+
+  g_current_instr = (distance_cm >= 0.0f) ? CMD_FORWARD_DIST_TARGET : CMD_BACKWARD_DIST_TARGET;
+  move_start_straight(distance_cm);
+  wait_for_motion_completion();
+  g_current_instr = 0;
+  control_set_target_ticks_per_dt(0, 0);
+  motor_brake_ms(brake_ms);
+  motor_stop();
+}
+
+static void execute_turn_move(char turn_opcode, float angle_deg, uint32_t brake_ms)
+{
+  g_current_instr = turn_opcode;
+  move_turn(turn_opcode, angle_deg);
+  wait_for_motion_completion();
+  g_current_instr = 0;
+  control_set_target_ticks_per_dt(0, 0);
+  motor_brake_ms(brake_ms);
+  motor_stop();
 }
 
 /* USER CODE END 0 */
@@ -185,16 +438,27 @@ int main(void)
   /* USER CODE BEGIN 2 */
 OLED_Init();
 motor_init();          // Initialize motors (PWM + encoders)
-control_init();        // Start 100 Hz control loop tick (TIM5 or similar)
+control_init();        // Start 100 Hz control loop
+ultrasonic_init(&htim12, GPIOB, GPIO_PIN_15);
 
 // Initialize IMU (detects 0x68/0x69, sets 2000 dps; calibration happens later)
 uint8_t icm_addrSel = 0;
 imu_init(&hi2c2, &icm_addrSel);
+imu_zero_yaw();
 
-// Arm UART3 RX interrupt and send hello to RPi
-HAL_UART_Receive_IT(&huart3, &uart3_rx_byte, 1);   // arm RX
-const char *hello = "USART3 ready with interrupts\r\n";
-HAL_UART_Transmit(&huart3, (uint8_t*)hello, strlen(hello), 100);
+  g_gyro_log.yaw_unwrapped_deg = 0.0f;
+  g_gyro_log.prev_yaw_deg = 0.0f;
+  g_gyro_log.have_prev_sample = 0U;
+
+commands_init();
+
+// Arm first RX
+HAL_UART_Receive_IT(&huart3, &uart3_rx_byte, 1);
+
+// Optional startup message
+const char *hello = "STM32 UART ready\r\n";
+HAL_UART_Transmit(&huart3, (uint8_t*)hello, strlen(hello), HAL_MAX_DELAY);
+
 
 // (Optional) show which address was used on OLED/UART
 
@@ -216,7 +480,7 @@ HAL_UART_Transmit(&huart3, (uint8_t*)hello, strlen(hello), 100);
   /* USER CODE END RTOS_TIMERS */
 
   /* USER CODE BEGIN RTOS_QUEUES */
-  /* add queues, ... */
+  /* No RTOS queues used */
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -228,6 +492,9 @@ HAL_UART_Transmit(&huart3, (uint8_t*)hello, strlen(hello), 100);
 
   /* creation of oledTask */
   oledTaskHandle = osThreadNew(oled_task, NULL, &oledTask_attributes);
+
+  /* creation of UART_task */
+  UART_taskHandle = osThreadNew(uart_task, NULL, &UART_task_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -774,6 +1041,9 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(trigger_pin_GPIO_Port, trigger_pin_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, OLED_DC_Pin|OLED_RES_Pin|OLED_SDA_Pin|OLED_SCL_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : LED3_Pin */
@@ -782,6 +1052,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LED3_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : trigger_pin_Pin */
+  GPIO_InitStruct.Pin = trigger_pin_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(trigger_pin_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : OLED_DC_Pin OLED_RES_Pin OLED_SDA_Pin OLED_SCL_Pin */
   GPIO_InitStruct.Pin = OLED_DC_Pin|OLED_RES_Pin|OLED_SDA_Pin|OLED_SCL_Pin;
@@ -804,13 +1081,343 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 /* USER CODE BEGIN PV */
 // UI helpers for progress display
-static volatile uint8_t  g_move_active = 0;
-extern volatile int32_t g_move_target_left_ticks; // set this when you start a straight move
+static void oled_draw_default_layout(void)
+{
+  OLED_Clear();
+  OLED_ShowString(0, 0, (uint8_t*)"Dist(cm):");
+  OLED_ShowString(0, 24, (uint8_t*)"Yaw(deg):");
+  OLED_ShowString(0, 48, (uint8_t*)"RX char:");
+  OLED_Refresh_Gram();
+}
 
-// Encoder conversion for your setup (6.6 cm wheel, 330 PPR, x2 edges = 660 counts/rev)
-static const float WHEEL_CIRC_CM   = 3.1415926f * 6.6f;         // ≈ 20.735 cm
-static const float COUNTS_PER_REV  = 1560.0f;                    // calibration
-static const float TICKS_PER_CM    = COUNTS_PER_REV / WHEEL_CIRC_CM;
+static void format_rate_line(char *out, size_t len, const char *label, float value)
+{
+  int value10 = (int)(value * 10.0f + (value >= 0.0f ? 0.5f : -0.5f));
+  int sign = (value10 < 0) ? -1 : 1;
+  if (value10 < 0) value10 = -value10;
+  int whole = value10 / 10;
+  int tenth = value10 % 10;
+  (void)snprintf(out, len, "%s:%c%d.%d dps", label, (sign < 0) ? '-' : ' ', whole, tenth);
+}
+
+static void oled_show_avg_screen(float left_rate, float right_rate)
+{
+  char line[21];
+
+  OLED_Clear();
+  OLED_ShowString(0, 0, (uint8_t*)"Servo Avg Rate");
+
+  if (fabsf(left_rate) > 0.01f) {
+    format_rate_line(line, sizeof(line), "Left", left_rate);
+  } else {
+    (void)snprintf(line, sizeof(line), "Left:    ---");
+  }
+  OLED_ShowString(0, 16, (uint8_t*)line);
+
+  if (fabsf(right_rate) > 0.01f) {
+    format_rate_line(line, sizeof(line), "Right", right_rate);
+  } else {
+    (void)snprintf(line, sizeof(line), "Right:   ---");
+  }
+  OLED_ShowString(0, 32, (uint8_t*)line);
+
+  if (fabsf(left_rate) > 0.01f && fabsf(right_rate) > 0.01f) {
+    float ratio = left_rate / right_rate;
+    int ratio100 = (int)(ratio * 100.0f + (ratio >= 0.0f ? 0.5f : -0.5f));
+    int ratio_int = ratio100 / 100;
+    int ratio_frac = ratio100 % 100;
+    (void)snprintf(line, sizeof(line), "Ratio: %d.%02d", ratio_int, ratio_frac);
+  } else {
+    (void)snprintf(line, sizeof(line), "Ratio:   ---");
+  }
+  OLED_ShowString(0, 48, (uint8_t*)line);
+  OLED_Refresh_Gram();
+}
+
+static void uart_send_response(const char *msg)
+{
+  if (msg == NULL) {
+    return;
+  }
+
+  size_t len = strlen(msg);
+  if (len == 0U) {
+    return;
+  }
+
+  if (len > UINT16_MAX) {
+    len = UINT16_MAX;
+  }
+
+  (void)HAL_UART_Transmit(&huart3, (uint8_t *)msg, (uint16_t)len, 100);
+}
+
+static uint16_t ring_advance(uint16_t index)
+{
+  return (uint16_t)((index + 1U) % UART_RING_BUFFER_SIZE);
+}
+
+static void process_serial_input(void)
+{
+  while (uart_ring_tail != uart_ring_head) {
+    uint8_t byte = uart_ring_buffer[uart_ring_tail];
+    uart_ring_tail = ring_advance(uart_ring_tail);
+
+    if (byte == '\r') {
+      continue;
+    }
+
+    if (uart_cmd_length < UART_CMD_BUF_SIZE) {
+      uart_cmd_buffer[uart_cmd_length++] = byte;
+    } else {
+      uart_cmd_length = 0U;
+      continue;
+    }
+
+    if (byte == CMD_END) {
+      commands_process(&huart3, uart_cmd_buffer, uart_cmd_length);
+      uart_cmd_length = 0U;
+    }
+  }
+}
+
+static void wait_for_motion_completion(void)
+{
+  while (move_is_active()) {
+    osDelay(5);
+    process_serial_input();
+  }
+}
+
+static char determine_turn_opcode(const Command *cmd)
+{
+  if (cmd == NULL) {
+    return 'L';
+  }
+
+  if (cmd->dir < 0) {
+    return (cmd->angleToSteer >= 0.0f) ? 'r' : 'l';
+  }
+
+  return (cmd->angleToSteer >= 0.0f) ? 'R' : 'L';
+}
+
+static char command_display_code(const Command *cmd)
+{
+  if (cmd == NULL) {
+    return 0;
+  }
+
+  switch (cmd->opType) {
+    case COMMAND_OP_STOP:
+      return CMD_FULL_STOP;
+
+    case COMMAND_OP_TURN:
+      return determine_turn_opcode(cmd);
+
+    case COMMAND_OP_DRIVE:
+      switch (cmd->distType) {
+        case COMMAND_DIST_TARGET:
+          return (cmd->dir < 0) ? CMD_BACKWARD_DIST_TARGET : CMD_FORWARD_DIST_TARGET;
+        case COMMAND_DIST_STOP_AWAY:
+          return (cmd->dir < 0) ? CMD_BACKWARD_DIST_AWAY : CMD_FORWARD_DIST_AWAY;
+        case COMMAND_DIST_STOP_L:
+          return CMD_FORWARD_DIST_L;
+        case COMMAND_DIST_STOP_R:
+          return CMD_FORWARD_DIST_R;
+        case COMMAND_DIST_STOP_L_LESS:
+          return CMD_BACKWARD_DIST_L;
+        case COMMAND_DIST_STOP_R_LESS:
+          return CMD_BACKWARD_DIST_R;
+        default:
+          break;
+      }
+      break;
+
+    case COMMAND_OP_INFO_DIST:
+      return CMD_INFO_DIST;
+
+    case COMMAND_OP_INFO_MARKER:
+      return CMD_INFO_MARKER;
+
+    case COMMAND_OP_IMU_CALIBRATE:
+      return 'C';
+
+    case COMMAND_OP_INVALID:
+    default:
+      break;
+  }
+
+  if (cmd->str && cmd->str_size > 0U) {
+    char flag = (char)cmd->str[0];
+    if (flag != '\0' && flag != CMD_END) {
+      return flag;
+    }
+  }
+
+  return 0;
+}
+
+static void execute_command(Command *cmd)
+{
+  if (cmd == NULL) {
+    return;
+  }
+
+  char display_code = command_display_code(cmd);
+  g_current_instr = display_code;
+
+  switch (cmd->opType) {
+    case COMMAND_OP_STOP:
+      move_abort();
+      motor_stop();
+      break;
+
+    case COMMAND_OP_TURN:
+    {
+      char turn_opcode = determine_turn_opcode(cmd);
+      float angle_deg = fabsf(cmd->val);
+      if (angle_deg <= 0.0f) {
+        angle_deg = fabsf(cmd->angleToSteer);
+      }
+      if (angle_deg <= 0.0f) {
+      if (angle_deg <= 0.0f) {
+        angle_deg = 90.0f;
+      }
+
+      move_turn(turn_opcode, angle_deg);
+      wait_for_motion_completion();
+      control_set_target_ticks_per_dt(0, 0);
+      motor_brake_ms(50);
+      motor_stop();
+      break;
+    }
+
+    case COMMAND_OP_DRIVE:
+      if (cmd->distType == COMMAND_DIST_TARGET) {
+        float distance_cm = fabsf(cmd->val);
+        if (distance_cm <= 0.0f) {
+          break;
+        }
+
+        if (cmd->dir < 0) {
+          distance_cm = -distance_cm;
+        }
+
+        move_start_straight(distance_cm);
+        wait_for_motion_completion();
+        control_set_target_ticks_per_dt(0, 0);
+        motor_brake_ms(50);
+        motor_stop();
+      } else if (cmd->distType == COMMAND_DIST_STOP_AWAY) {
+        const float forward_distance_cm = fabsf(cmd->val);
+        if (forward_distance_cm <= 0.0f) {
+          break;
+        }
+
+        const float stop_threshold_cm = 25.0f;
+        move_start_straight(forward_distance_cm);
+
+        uint8_t consecutive_close = 0U;
+        uint8_t obstacle_stopped = 0U;
+
+        while (move_is_active()) {
+          osDelay(10);
+          process_serial_input();
+
+          ultrasonic_trigger();
+          osDelay(50);
+          float sensed = ultrasonic_get_distance_cm();
+
+          if (sensed > 0.0f && sensed < stop_threshold_cm) {
+            consecutive_close++;
+            if (consecutive_close >= 2U) {
+              move_abort();
+              Servo_Center(&global_steer);
+              osDelay(50);
+
+              control_set_target_ticks_per_dt(0, 0);
+              motor_stop();
+
+              obstacle_stopped = 1U;
+              break;
+            }
+          } else {
+            consecutive_close = 0U;
+          }
+        }
+
+        if (!obstacle_stopped) {
+          wait_for_motion_completion();
+          control_set_target_ticks_per_dt(0, 0);
+          motor_brake_ms(50);
+          motor_stop();
+        } else {
+          const uint32_t reverse_timeout_ms = 4000U;
+          const int32_t reverse_ticks = -3;
+          uint32_t reverse_start_ms = HAL_GetTick();
+
+          control_set_target_ticks_per_dt(reverse_ticks, reverse_ticks);
+
+          while (1) {
+            osDelay(60);
+            process_serial_input();
+
+            ultrasonic_trigger();
+            osDelay(50);
+            float sensed = ultrasonic_get_distance_cm();
+
+            if (sensed > stop_threshold_cm) {
+              break;
+            }
+
+            if ((HAL_GetTick() - reverse_start_ms) > reverse_timeout_ms) {
+              break;
+            }
+          }
+
+          control_set_target_ticks_per_dt(0, 0);
+          motor_brake_ms(50);
+          motor_stop();
+        }
+      }
+      break;
+
+    case COMMAND_OP_IMU_CALIBRATE:
+    {
+      move_abort();
+      control_set_target_ticks_per_dt(0, 0);
+      motor_brake_ms(50);
+      motor_stop();
+      Servo_Center(&global_steer);
+
+      g_is_calibrating = 1U;
+      osDelay(100);
+
+      const int sample_count = 2000; // ~4 seconds @ 2 ms per sample
+      imu_calibrate_bias_blocking(sample_count);
+      imu_zero_yaw();
+
+      g_is_calibrating = 0U;
+      g_gyro_log.yaw_unwrapped_deg = 0.0f;
+      g_gyro_log.prev_yaw_deg = 0.0f;
+      g_gyro_log.have_prev_sample = 0U;
+      break;
+    }
+
+    case COMMAND_OP_INFO_DIST:
+    case COMMAND_OP_INFO_MARKER:
+    case COMMAND_OP_INVALID:
+    default:
+      break;
+  }
+
+  g_current_instr = 0;
+  Servo_Center(&global_steer);
+  control_set_target_ticks_per_dt(0, 0);
+  motor_stop();
+}
+
 /* USER CODE END PV */
 /* USER CODE END 4 */
 
@@ -824,90 +1431,60 @@ static const float TICKS_PER_CM    = COUNTS_PER_REV / WHEEL_CIRC_CM;
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
-  // Initialize servo on TIM8 CH1. Compute tick_us from current timer clock and prescaler.
-  {
-    uint32_t pclk2 = HAL_RCC_GetPCLK2Freq();
-    uint32_t timclk = pclk2; // APB2 prescaler = 1
-    float tick_us = ((float)(htim8.Init.Prescaler + 1U)) * (1000000.0f / (float)timclk);
-    // Example with HSI=16MHz, APB2=16MHz, PSC=319 => tick_us ~ 20.0, ARR=999 => 50 Hz PWM
+  configure_servo_for_motion();
+  reset_motion_state();
 
-    // L/R Turn radius at 100% ~ 25-30cm
-    Servo_Attach(&global_steer, &htim8, TIM_CHANNEL_1, tick_us, 1050, 1500, 2600);
-  }
+  perform_initial_calibration();
 
-  if (Servo_Start(&global_steer) != HAL_OK) {
-    for(;;) { osDelay(1000); }
-  }
-  Servo_Center(&global_steer);
+  uint8_t prev_button_state = user_is_pressed();
+  uint8_t run_plan_pending = 0U;
+  uint8_t did_initial_calibration = 1U;
 
-  // Wait on the user button before starting the run so the robot sits idle on
-  // the start screen with live telemetry. Detect a rising edge to avoid
-  // re-triggering if the operator keeps the button pressed.
-  uint8_t prev_pressed = user_is_pressed();
-  while (!g_user_start_requested) {
-    uint8_t pressed = user_is_pressed();
-    if (!prev_pressed && pressed) {
-      g_user_start_requested = 1;
+  for(;;) {
+    process_serial_input();
+
+    uint8_t button_state = user_is_pressed();
+    if (!prev_button_state && button_state) {
+      run_plan_pending = 1U;
     }
-    prev_pressed = pressed;
-    osDelay(10);
-  }
+    prev_button_state = button_state;
 
-  // Give the operator a short buffer, then calibrate the gyro while the robot
-  // is guaranteed to be stationary.
-  g_is_calibrating = 1;
-  osDelay(1000);
-  control_set_target_ticks_per_dt(0, 0);
-  motor_stop();
-  imu_calibrate_bias_blocking();
-  imu_zero_yaw();
-  g_is_calibrating = 0;
+    if (run_plan_pending && !move_is_active()) {
+      if (!did_initial_calibration) {
+        perform_initial_calibration();
+        reset_motion_state();
+        did_initial_calibration = 1U;
+      }
 
-  // Execute instruction list once: [[S,20],[L,0],[s,10]]
-  // Define instructions
-  typedef struct { char dir; float dist_cm; } instr_t;
-  /////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  const instr_t program[] = {{'S',200.0f},{'l', 0.0f},{'R',0.0f}, {'S',125.0f}};
-  /////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  const int program_len = sizeof(program)/sizeof(program[0]);
-
-  for (int i = 0; i < program_len; ++i) {
-    char d = program[i].dir;
-    float cm = program[i].dist_cm;
-
-    // expose current instruction to OLED task
-    g_current_instr = d;
-
-    if (d == 'S') {
-      move_start_straight(cm);
-    } else if (d == 's') {
-      move_start_straight(-cm);
-    } else if (d == 'L' || d == 'R' || d == 'l' || d == 'r') {
-      move_start_turn(d);
-    } else {
-      // Unknown directive: brake and stop, then break
-      control_set_target_ticks_per_dt(0, 0);
-      motor_brake_ms(80);
-      motor_stop();
-      g_current_instr = 0;
-      break;
+      run_instruction_plan();
+      reset_motion_state();
+      run_plan_pending = 0U;
+      continue;
     }
 
-    // Wait until current movement completes
-    while (move_is_active()) {
+    if (move_is_active()) {
       osDelay(5);
+      continue;
     }
 
-  // Immediately continue to next instruction
-    g_current_instr = 0; // clear between instructions
-  }
+    Command *cmd = commands_pop();
+    if (cmd == NULL) {
+      osDelay(5);
+      continue;
+    }
 
-  // Program complete: no instructions left — brake and stop
-  control_set_target_ticks_per_dt(0, 0);
-  motor_brake_ms(80);
-  motor_stop();
-  g_current_instr = 0;
-  for(;;) { osDelay(1000); }
+    if (!g_uart_initial_calibration_done) {
+      g_uart_initial_calibration_done = 1U;
+      perform_first_uart_calibration();
+      process_serial_input();
+    }
+
+    execute_command(cmd);
+    osDelay(5);
+    commands_end(&huart3, cmd);
+    process_serial_input();
+    osDelay(5);
+  }
   /* USER CODE END 5 */
 }
 
@@ -921,11 +1498,9 @@ void StartDefaultTask(void *argument)
 void control_task(void *argument)
 {
   /* USER CODE BEGIN control_task */
-  // Run the 100 Hz speed control loop when due
   for(;;) {
     if (control_is_due()) {
       control_step();
-      // Tick movement planner at the same 100 Hz cadence
       move_tick_100Hz();
       control_clear_due();
     }
@@ -944,69 +1519,78 @@ void control_task(void *argument)
 void oled_task(void *argument)
 {
   /* USER CODE BEGIN oled_task */
-// Update OLED at ~5 Hz; initialize static layout once, then update dynamic values only
+  // Update OLED at ~5 Hz; initialize static layout once, then update dynamic values only
   uint32_t last_tick = HAL_GetTick();
+  uint8_t showing_results = 0U;
 
-  // Static layout (draw once)
-  OLED_Clear();
-  OLED_ShowString(0, 16, (uint8_t*)"Yaw: ");
-  OLED_ShowString(88, 16, (uint8_t*)" deg");
-  OLED_ShowString(0, 32, (uint8_t*)"T:");
-  OLED_ShowChar(48, 32, ',', 12, 1);
-  OLED_ShowString(0, 48, (uint8_t*)"M:");
-  OLED_ShowChar(48, 48, ',', 12, 1);
-  OLED_Refresh_Gram();
+  oled_draw_default_layout();
 
   for(;;)
   {
+    uint8_t show_results = g_show_results;
+    if (show_results) {
+      if (!showing_results) {
+        oled_show_avg_screen(g_left_avg_rate, g_right_avg_rate);
+        showing_results = 1U;
+      }
+      osDelay(50);
+      continue;
+    } else if (showing_results) {
+      showing_results = 0U;
+      oled_draw_default_layout();
+      last_tick = HAL_GetTick();
+    }
+
     uint32_t now = HAL_GetTick();
-    if (now - last_tick >= 200) {
+    if (now - last_tick >= 200) { // Update at 5 Hz
       last_tick = now;
 
-      float yawf = imu_get_yaw();
-      int32_t tL=0,tR=0,mL=0,mR=0;
-      control_get_target_and_measured(&tL, &tR, &mL, &mR);
+      // --- SENSOR LOGIC ---
+      ultrasonic_trigger();
+      osDelay(50); // Wait for measurement
+      float distance = ultrasonic_get_distance_cm();
+      // --- END SENSOR LOGIC ---
 
-      // Status line: prompt, calibration state, or descriptive instruction text
-      const char *status_text = NULL;
-      if (!g_user_start_requested) {
-        status_text = "Press to start";
-      } else if (g_is_calibrating) {
-        status_text = "Calibrating";
-      } else if (g_current_instr) {
-        status_text = instruction_to_text(g_current_instr);
+      char buf[16];
+
+      int dist10 = (int)(distance * 10.0f + (distance >= 0.0f ? 0.5f : -0.5f));
+      if (dist10 < 0) dist10 = 0;
+      int dist_int = dist10 / 10;
+      int dist_tenth = dist10 % 10;
+      (void)snprintf(buf, sizeof(buf), "%3d.%1d", dist_int, dist_tenth);
+      OLED_ShowString(72, 0, (uint8_t*)"       ");
+      OLED_ShowString(72, 0, (uint8_t*)buf);
+
+      uint8_t rx_valid = g_uart_char_valid;
+      uint8_t rx_char = g_uart_last_char;
+      if (rx_valid) {
+        OLED_ShowString(72, 24, (uint8_t*)"   ");
+        OLED_ShowChar(72, 24, (char)rx_char, 12, 1);
       } else {
-        status_text = "Complete";
+        OLED_ShowString(72, 24, (uint8_t*)" - ");
       }
 
-      OLED_ShowString(0, 0, (uint8_t*)"                ");
-      OLED_ShowString(0, 0, (uint8_t*)status_text);
+      char cmd_char = g_current_instr;
+      if (cmd_char) {
+        OLED_ShowString(48, 48, (uint8_t*)"   ");
+        OLED_ShowChar(48, 48, cmd_char, 12, 1);
+      } else {
+        OLED_ShowString(48, 48, (uint8_t*)" - ");
+      }
 
-      // Lightweight rounding to avoid libm dependency
-      int yaw10 = (int)(yawf * 10.0f + (yawf >= 0.0f ? 0.5f : -0.5f));
-      int sign = (yaw10 < 0) ? -1 : 1;
-      if (yaw10 < 0) yaw10 = -yaw10;
-      int yaw_deg = yaw10 / 10;
-      int yaw_tenth = yaw10 % 10;
-
-      // Dynamic updates only (no full clear)
-      // Yaw
-      OLED_ShowChar(40, 16, (sign < 0) ? '-' : ' ', 12, 1);
-      OLED_ShowNumber(48, 16, (uint32_t)yaw_deg, 3, 12);
-      OLED_ShowChar(72, 16, '.', 12, 1);
-      OLED_ShowChar(80, 16, (char)('0' + yaw_tenth), 12, 1);
-
-  // Targets: clear small areas first to avoid ghosting, then draw (show absolute ticks)
+      /*
+      // Targets: clear small areas first to avoid ghosting, then draw (show absolute ticks)
       OLED_ShowString(16, 32, (uint8_t*)"    ");
       OLED_ShowString(56, 32, (uint8_t*)"    ");
-  OLED_ShowNumber(16, 32, (uint32_t)(tL < 0 ? -tL : tL), 4, 12);
-  OLED_ShowNumber(56, 32, (uint32_t)(tR < 0 ? -tR : tR), 4, 12);
+      OLED_ShowNumber(16, 32, (uint32_t)(tL < 0 ? -tL : tL), 4, 12);
+      OLED_ShowNumber(56, 32, (uint32_t)(tR < 0 ? -tR : tR), 4, 12);
 
-  // Measured: clear small areas first to avoid ghosting, then draw (show absolute ticks)
+      // Measured: clear small areas first to avoid ghosting, then draw (show absolute ticks)
       OLED_ShowString(16, 48, (uint8_t*)"    ");
       OLED_ShowString(56, 48, (uint8_t*)"    ");
-  OLED_ShowNumber(16, 48, (uint32_t)(mL < 0 ? -mL : mL), 4, 12);
-  OLED_ShowNumber(56, 48, (uint32_t)(mR < 0 ? -mR : mR), 4, 12);
+      OLED_ShowNumber(16, 48, (uint32_t)(mL < 0 ? -mL : mL), 4, 12);
+      OLED_ShowNumber(56, 48, (uint32_t)(mR < 0 ? -mR : mR), 4, 12);
+      */
 
       // Refresh
       OLED_Refresh_Gram();
@@ -1014,6 +1598,62 @@ void oled_task(void *argument)
     osDelay(5);
   }
   /* USER CODE END oled_task */
+}
+
+/* USER CODE BEGIN Header_uart_task */
+/**
+* @brief Function implementing the UART_task thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_uart_task */
+void uart_task(void *argument)
+{
+  /* USER CODE BEGIN uart_task */
+  (void)argument;
+
+  uint8_t header_sent = 0U;
+  const uint32_t period_ms = 50U; // TEMP: yaw streaming cadence
+  uint32_t last_send_ms = 0U;
+
+  for(;;)
+  {
+    process_serial_input();
+
+    uint32_t now = HAL_GetTick();
+    if (!header_sent)
+    {
+      uart_send_response("#channel init yaw_deg\r\n");
+      header_sent = 1U;
+      last_send_ms = now;
+    }
+
+    // if ((uint32_t)(now - last_send_ms) >= period_ms)
+    // {
+    //   last_send_ms = now;
+
+    //   float yaw_deg = imu_get_yaw();
+    //   long yaw_mdeg = lroundf(yaw_deg * 1000.0f);
+    //   long abs_mdeg = (yaw_mdeg < 0) ? -yaw_mdeg : yaw_mdeg;
+    //   long whole = abs_mdeg / 1000L;
+    //   long frac = abs_mdeg % 1000L;
+
+    //   char line[32];
+    //   int len;
+    //   if (yaw_mdeg < 0) {
+    //     len = snprintf(line, sizeof(line), "-%ld.%03ld\r\n", whole, frac);
+    //   } else {
+    //     len = snprintf(line, sizeof(line), "%ld.%03ld\r\n", whole, frac);
+    //   }
+
+    //   if (len > 0 && len < (int)sizeof(line)) {
+    //     uart_send_response(line);
+    //   }
+    // }
+
+    osDelay(5);
+  }
+  /* USER CODE END uart_task */
 }
 
 /**
