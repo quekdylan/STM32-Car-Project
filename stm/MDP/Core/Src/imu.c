@@ -107,7 +107,7 @@ void imu_init(I2C_HandleTypeDef *hi2c, uint8_t *out_addrSel){
 
     // Set optimized gyro bias based on measured drift performance
     // This eliminates the need for manual calibration during startup
-    s_gyro_bias_z = -0.4f;  // Optimized bias for minimal drift (deg/s)
+    s_gyro_bias_z = 1.5f;  // Manual bias for minimal drift (deg/s)
     s_yaw_deg = 0.0f;
 
     // Enable magnetometer (non-fatal if fails)
@@ -125,8 +125,8 @@ void imu_calibrate_bias_blocking(int sample_count){
     }
 
     imu_calibrate_bias_(sample_count);
-    const float bias_seed = 0.4f;
-    const float alpha = 0.6f;
+    const float bias_seed = -0.357f; // -0.357
+    const float alpha = 1.0f;
     float measured_bias = s_gyro_bias_z;
     s_gyro_bias_z = (alpha * measured_bias) + ((1.0f - alpha) * bias_seed);
     // After calibration we know the current orientation should be treated as

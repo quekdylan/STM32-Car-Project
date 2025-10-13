@@ -17,8 +17,8 @@ extern TIM_HandleTypeDef htim5;
 
 // Initial guess for speed loop gains (percent per tick units)
 // Tune on your hardware (see notes in control.h)
-#define PID_KP                 (2.0f)
-#define PID_KI                 (0.5f)
+#define PID_KP                 (10.0f)
+#define PID_KI                 (0.003f)
 #define PID_KD                 (0.01f)
 
 static pid_type_def pid_left;

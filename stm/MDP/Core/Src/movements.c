@@ -4,6 +4,7 @@
 #include "imu.h"
 #include "control.h" // Assumes this provides control_set_target_ticks_per_dt()
 #include "servo.h"
+#include "sensor.h"
 #include "cmsis_os.h"
 #include <math.h>
 #include <stdlib.h> // For abs()
@@ -15,39 +16,66 @@
 
 // --- Motion Profile Configuration (Fixed distances in centimeters) ---
 // You can change these at runtime via move_set_profile_distances_cm().
-static float g_accel_dist_cm = 5.0f; // accelerate over first 5 cm
+static float g_accel_dist_cm = 10.0f; // accelerate over first 5 cm
 static float g_decel_dist_cm = 12.0f; // decelerate over last 12 cm
 
 // --- Speed Configuration ---
 // Speeds are defined in "encoder ticks per control period (10ms)".
 // You must tune these for your specific robot.
-#define V_MAX_TICKS_PER_DT (35.0f) // Max speed during cruise phase (e.g., 30 ticks / 10ms)
+#define V_MAX_TICKS_PER_DT (50.0f) // Max speed during cruise phase (e.g., 30 ticks / 10ms) 
 #define V_MIN_TICKS_PER_DT (3.0f)  // Minimum speed to overcome static friction and ensure smooth start/stop
 
 // --- Yaw Correction ---
 // Proportional gain for heading correction.
 // A small value gently corrects the heading. Too large a value will cause oscillation.
 // Units: (ticks/10ms) per degree of error.
-#define YAW_KP_TICKS_PER_DEG (6.0f)  // Increased from 3.0f for better straight-line correction
+#define YAW_KP_TICKS_PER_DEG (3.7f)  // Increased from 3.0f for better straight-line correction
+
+#define YAW_FILTER_WINDOW_SIZE  (10U)
 
 // --- Turn Configuration ---
 // Speed for ackermann turns (encoder ticks / 10ms per wheel after scaling).
-#define TURN_BASE_TICKS_PER_DT   (25)     // base speed before inner/outer scaling
-#define TURN_YAW_TARGET_DEG      (90.0f)  // desired turn angle
-#define TURN_YAW_TOLERANCE_DEG   (0.2f)   // acceptable tolerance to stop
-#define TURN_YAW_SLOW_BAND_DEG   (10.0f)  // start slowing when within this band
-#define TURN_MIN_TICKS_PER_DT    (3)      // minimum per-wheel speed while turning
+#define TURN_BASE_TICKS_PER_DT   (24)     // base speed before inner/outer scaling
+#define TURN_YAW_TARGET_DEG      (90.0f)  // default turn angle when none provided
+#define TURN_YAW_TOLERANCE_DEG   (0.1f)   // acceptable tolerance to stop
+#define TURN_YAW_SLOW_BAND_DEG   (8.0f)  // start slowing when within this band
+#define TURN_MIN_TICKS_PER_DT    (4)      // minimum per-wheel speed while turning
 #define STEER_SETTLE_MS_PER_UNIT (2.0f)   // estimated ms per servo command unit of travel
 
 // duration (in 100 Hz ticks) to hold/transition minimum speed at turn start to allow time for front wheels to turn
 static uint16_t g_turn_spinup_ticks = 100;
 
+// --- Arc Maneuver Configuration ---
+#define ARC_BASE_TICKS_PER_DT         (30)     // nominal encoder ticks/10ms during arc
+#define ARC_SERVO_MAG_DEG             (80.0f)  // outer segment steering angle
+#define ARC_MIDDLE_SERVO_MAG_DEG      (80.0f)  // middle segment steering angle
+#define ARC_OUTER_RATIO               (1.5f)   // speed multiplier for outer wheel
+#define ARC_YAW_TARGET_DEG            (42.0f)  // yaw goal per arc leg
+#define ARC_YAW_TOLERANCE_DEG         (0.1f)   // yaw tolerance before switching segments
+#define ARC_SLOW_BAND_DEG             (6.0f)   // yaw error band for slowing down
+#define ARC_STRAIGHTEN_DELAY_TICKS    (10U)    // hold straight after final segment
+#define ARC_SEGMENT_MIN_HOLD_TICKS    (35U)    // keep minimum speed at segment start
+
+// --- Drive until obstacle configuration ---
+#define DRIVE_OBS_TICKS_PER_DT             (40)    // nominal speed while approaching obstacle
+#define DRIVE_OBS_DEFAULT_THRESHOLD_CM     (30.0f) // fallback stop distance
+#define DRIVE_OBS_DEFAULT_MAX_DIST_CM      (300.0f) // max travel before abort
+#define DRIVE_OBS_SLOW_DISTANCE_CM         (15.0f) // begin slowing within this range
+#define DRIVE_OBS_STOP_TOLERANCE_CM        (0.2f)  // acceptable distance error
+#define DRIVE_OBS_SAMPLE_INTERVAL_TICKS    (4U)    // ultrasonic sampling interval
+#define DRIVE_OBS_TRIGGER_DELAY_MS         (40U)   // wait after trigger before read
+
+// --- Post-turn steering stabilization ---
+#define SERVO_POST_TURN_RIGHT_US         (1600U) // apply slight right bias after finishing a left turn
+#define SERVO_POST_TURN_LEFT_US          (1450U) // apply slight left bias after finishing a right turn
+#define SERVO_POST_TURN_DELAY_TICKS      (5U)    // wait ~50 ms at 100 Hz before re-centering
+
 // Turn profiles allow quick switching between steering envelopes/differentials.
 #define TURN_DEFAULT_PROFILE               MOVE_TURN_PROFILE_PRIMARY
 
 // 30cm turn radius
-#define TURN_PROFILE_PRIMARY_STEER_MAG      (90.9f)
-#define TURN_PROFILE_PRIMARY_OUTER_RATIO    (1.759f)
+#define TURN_PROFILE_PRIMARY_STEER_MAG      (95.9f)
+#define TURN_PROFILE_PRIMARY_OUTER_RATIO    (1.5f)
 
 //20cm turn radius
 #define TURN_PROFILE_SECONDARY_STEER_MAG    (100.0f)
@@ -69,8 +97,20 @@ static const float TICKS_PER_CM   = COUNTS_PER_REV / WHEEL_CIRC_CM;
 typedef enum {
   MOVE_IDLE = 0,
   MOVE_STRAIGHT,
-  MOVE_TURN
+  MOVE_TURN,
+  MOVE_ARC
 } move_mode_e;
+
+extern Servo global_steer; // provided by main.c
+
+typedef struct {
+  move_arc_side_e side;
+  uint8_t segment_index;
+  float yaw_targets[3];
+  float servo_cmds[3];
+  uint16_t straighten_delay_ticks;
+  uint16_t segment_hold_ticks;
+} move_arc_state_t;
 
 typedef struct {
   uint8_t   active;           // Is a movement in progress?
@@ -91,11 +131,58 @@ typedef struct {
   float     steer_cmd;        // servo command written in range [-100..+100]
   uint16_t  spinup_ticks_left;// remaining ticks to hold TURN_MIN_TICKS_PER_DT at turn start
   uint16_t  spinup_total_ticks;// configured spin-up duration (ticks)
+  uint8_t   servo_recentering_phase; // 0 = none, 1 = waiting to center after overshoot
+  uint16_t  servo_recentering_counter; // countdown ticks for post-turn centering
+  move_arc_state_t arc;       // state for arc maneuver
 } move_state_t;
 
 static move_state_t ms = {0};
 
+typedef struct {
+  float    samples[YAW_FILTER_WINDOW_SIZE];
+  float    sum;
+  uint8_t  count;
+  uint8_t  index;
+} yaw_filter_t;
+
+static yaw_filter_t g_yaw_filter = {0};
+
 static move_turn_profile_e g_turn_profile = TURN_DEFAULT_PROFILE;
+
+static void yaw_filter_reset(float seed)
+{
+  g_yaw_filter.sum = 0.0f;
+  g_yaw_filter.count = 0U;
+  g_yaw_filter.index = 0U;
+  for (uint8_t i = 0U; i < YAW_FILTER_WINDOW_SIZE; ++i) {
+    g_yaw_filter.samples[i] = seed;
+  }
+}
+
+static float yaw_filter_apply(float sample)
+{
+  if (YAW_FILTER_WINDOW_SIZE == 0U) {
+    return sample;
+  }
+
+  if (g_yaw_filter.count < YAW_FILTER_WINDOW_SIZE) {
+    g_yaw_filter.samples[g_yaw_filter.index] = sample;
+    g_yaw_filter.sum += sample;
+    g_yaw_filter.index = (uint8_t)((g_yaw_filter.index + 1U) % YAW_FILTER_WINDOW_SIZE);
+    g_yaw_filter.count++;
+  } else {
+    float old_sample = g_yaw_filter.samples[g_yaw_filter.index];
+    g_yaw_filter.samples[g_yaw_filter.index] = sample;
+    g_yaw_filter.sum += sample - old_sample;
+    g_yaw_filter.index = (uint8_t)((g_yaw_filter.index + 1U) % YAW_FILTER_WINDOW_SIZE);
+  }
+
+  if (g_yaw_filter.count == 0U) {
+    return sample;
+  }
+
+  return g_yaw_filter.sum / (float)g_yaw_filter.count;
+}
 
 static float turn_profile_get_steer_mag(void)
 {
@@ -117,7 +204,14 @@ static uint32_t compute_servo_settle_ms(float target_cmd)
   float settle_ms = delta * STEER_SETTLE_MS_PER_UNIT;
   return (uint32_t)lroundf(settle_ms);
 }
-extern Servo global_steer; // provided by main.c
+
+static void schedule_post_turn_servo_recentering(void)
+{
+  uint16_t pulse_us = (ms.turn_sign > 0) ? SERVO_POST_TURN_RIGHT_US : SERVO_POST_TURN_LEFT_US;
+  Servo_WriteUS(&global_steer, pulse_us);
+  ms.servo_recentering_phase = 1U;
+  ms.servo_recentering_counter = SERVO_POST_TURN_DELAY_TICKS;
+}
 
 // =================================================================================
 // P U B L I C   A P I
@@ -146,6 +240,11 @@ void move_abort(void) {
   ms.mode = MOVE_IDLE;
   control_set_target_ticks_per_dt(0, 0);
   motor_stop();
+  ms.servo_recentering_phase = 0U;
+  ms.servo_recentering_counter = 0U;
+  ms.steer_cmd = 0.0f;
+  Servo_Center(&global_steer);
+  ms.arc.segment_hold_ticks = 0U;
 }
 
 void move_start_straight(float distance_cm) {
@@ -153,9 +252,12 @@ void move_start_straight(float distance_cm) {
   motor_reset_encoders();
   control_sync_encoders();
   imu_zero_yaw(); // Ensure we start with a target heading of 0 degrees
+  yaw_filter_reset(0.0f);
   ms.active = 0;
   ms.mode = MOVE_STRAIGHT;
   ms.dir = (distance_cm >= 0.0f) ? 1 : -1;
+  ms.servo_recentering_phase = 0U;
+  ms.servo_recentering_counter = 0U;
 
   // Center steering for straight driving with proportional settle wait
   Servo_Center(&global_steer);
@@ -199,8 +301,11 @@ void move_turn(char dir_char, float angle_deg)
   motor_reset_encoders();   // keeps odometry deltas clean
   control_sync_encoders();
   imu_zero_yaw();           // measure delta from current heading
+  yaw_filter_reset(0.0f);
   ms.mode = MOVE_TURN;
   ms.active = 0;
+  ms.servo_recentering_phase = 0U;
+  ms.servo_recentering_counter = 0U;
 
   // Determine turn side and drive direction
   if (dir_char == 'L') {
@@ -231,6 +336,8 @@ void move_turn(char dir_char, float angle_deg)
 
   // Steering command: Servo negative = left, positive = right; consistent even when reversing
   float profile_steer_mag = turn_profile_get_steer_mag();
+
+
   float steer_angle = (ms.turn_sign > 0) ? -profile_steer_mag : +profile_steer_mag;
 
   // Ensure rear wheels are stationary before moving the steering linkage
@@ -258,15 +365,202 @@ void move_turn(char dir_char, float angle_deg)
                                   TURN_MIN_TICKS_PER_DT * ms.drive_sign);
 }
 
+void move_start_arc(move_arc_side_e side)
+{
+  if (side != MOVE_ARC_SIDE_LEFT && side != MOVE_ARC_SIDE_RIGHT) {
+    side = MOVE_ARC_SIDE_LEFT;
+  }
+
+  motor_reset_encoders();
+  control_sync_encoders();
+  imu_zero_yaw();
+  yaw_filter_reset(0.0f);
+
+  ms.active = 0U;
+  ms.mode = MOVE_ARC;
+  ms.dir = 1;
+  ms.servo_recentering_phase = 0U;
+  ms.servo_recentering_counter = 0U;
+
+  Servo_Center(&global_steer);
+  uint32_t settle_ms = compute_servo_settle_ms(0.0f);
+  if (settle_ms > 0U) {
+    osDelay(settle_ms);
+  }
+  ms.steer_cmd = 0.0f;
+
+  ms.arc.side = side;
+  ms.arc.segment_index = 0U;
+  ms.arc.straighten_delay_ticks = 0U;
+  ms.arc.segment_hold_ticks = ARC_SEGMENT_MIN_HOLD_TICKS;
+
+  float first_target = (side == MOVE_ARC_SIDE_LEFT) ? ARC_YAW_TARGET_DEG : -ARC_YAW_TARGET_DEG;
+  float first_servo = (side == MOVE_ARC_SIDE_LEFT) ? -ARC_SERVO_MAG_DEG : ARC_SERVO_MAG_DEG;
+
+  ms.arc.yaw_targets[0] = first_target;
+  ms.arc.yaw_targets[1] = -first_target;
+  ms.arc.yaw_targets[2] = 0.0f;
+
+  ms.arc.servo_cmds[0] = first_servo;
+  ms.arc.servo_cmds[1] = (side == MOVE_ARC_SIDE_LEFT)
+                             ? ARC_MIDDLE_SERVO_MAG_DEG
+                             : -ARC_MIDDLE_SERVO_MAG_DEG;
+  ms.arc.servo_cmds[2] = first_servo;
+
+  ms.prev_yaw_deg = 0.0f;
+  ms.yaw_accum_deg = 0.0f;
+
+  ms.steer_cmd = ms.arc.servo_cmds[0];
+  Servo_WriteAngle(&global_steer, ms.steer_cmd);
+
+  control_set_target_ticks_per_dt(ARC_BASE_TICKS_PER_DT, ARC_BASE_TICKS_PER_DT);
+  ms.active = 1U;
+}
+
+void move_drive_until_obstacle(float stop_threshold_cm, void (*service_hook)(void))
+{
+  float target_threshold_cm = (stop_threshold_cm > 0.0f) ? stop_threshold_cm : DRIVE_OBS_DEFAULT_THRESHOLD_CM;
+
+  move_abort();
+  Servo_Center(&global_steer);
+  osDelay(20);
+  if (service_hook) {
+    service_hook();
+  }
+
+  motor_reset_encoders();
+  control_sync_encoders();
+  imu_zero_yaw();
+  yaw_filter_reset(0.0f);
+
+  int32_t prev_left = motor_get_left_encoder_counts();
+  int32_t prev_right = motor_get_right_encoder_counts();
+  float travelled_cm = 0.0f;
+  uint8_t sample_counter = 0U;
+  int32_t dir_sign = 0;
+
+  control_set_target_ticks_per_dt(0, 0);
+
+  while (1) {
+    osDelay(10);
+    if (service_hook) {
+      service_hook();
+    }
+
+    int32_t left_now = motor_get_left_encoder_counts();
+    int32_t right_now = motor_get_right_encoder_counts();
+    int32_t dl = left_now - prev_left;
+    int32_t dr = right_now - prev_right;
+    prev_left = left_now;
+    prev_right = right_now;
+
+    float avg_ticks = (fabsf((float)dl) + fabsf((float)dr)) * 0.5f;
+    travelled_cm += avg_ticks / TICKS_PER_CM;
+    if (travelled_cm >= DRIVE_OBS_DEFAULT_MAX_DIST_CM) {
+      break;
+    }
+
+    if (++sample_counter < DRIVE_OBS_SAMPLE_INTERVAL_TICKS) {
+      continue;
+    }
+    sample_counter = 0U;
+
+    ultrasonic_trigger();
+    osDelay(DRIVE_OBS_TRIGGER_DELAY_MS);
+    if (service_hook) {
+      service_hook();
+    }
+
+    float distance = ultrasonic_get_distance_cm();
+    if (distance <= 0.0f) {
+      continue;
+    }
+
+    float delta_cm = distance - target_threshold_cm;
+    if (dir_sign == 0) {
+      if (fabsf(delta_cm) <= DRIVE_OBS_STOP_TOLERANCE_CM) {
+        break;
+      }
+      dir_sign = (delta_cm > 0.0f) ? +1 : -1;
+    }
+
+    if ((dir_sign > 0 && delta_cm <= DRIVE_OBS_STOP_TOLERANCE_CM) ||
+        (dir_sign < 0 && delta_cm >= -DRIVE_OBS_STOP_TOLERANCE_CM)) {
+      break;
+    }
+
+    float distance_to_threshold = fabsf(delta_cm);
+
+    float commanded_ticks;
+    if (distance_to_threshold <= DRIVE_OBS_SLOW_DISTANCE_CM) {
+      float ratio = distance_to_threshold / DRIVE_OBS_SLOW_DISTANCE_CM;
+      if (ratio < 0.0f) ratio = 0.0f;
+      if (ratio > 1.0f) ratio = 1.0f;
+      commanded_ticks = V_MIN_TICKS_PER_DT +
+                        ((float)DRIVE_OBS_TICKS_PER_DT - V_MIN_TICKS_PER_DT) * ratio;
+    } else {
+      commanded_ticks = (float)DRIVE_OBS_TICKS_PER_DT;
+    }
+
+    if (commanded_ticks < (float)V_MIN_TICKS_PER_DT) {
+      commanded_ticks = (float)V_MIN_TICKS_PER_DT;
+    }
+    if (commanded_ticks > (float)DRIVE_OBS_TICKS_PER_DT) {
+      commanded_ticks = (float)DRIVE_OBS_TICKS_PER_DT;
+    }
+
+    int32_t base_ticks = (int32_t)lroundf(commanded_ticks);
+    if (base_ticks < V_MIN_TICKS_PER_DT) {
+      base_ticks = V_MIN_TICKS_PER_DT;
+    }
+    if (base_ticks > DRIVE_OBS_TICKS_PER_DT) {
+      base_ticks = DRIVE_OBS_TICKS_PER_DT;
+    }
+    base_ticks *= dir_sign;
+    float current_yaw = imu_get_yaw();
+    float filtered_yaw = yaw_filter_apply(current_yaw);
+    int32_t yaw_bias = (int32_t)lroundf(-filtered_yaw * YAW_KP_TICKS_PER_DEG);
+    if (dir_sign < 0) {
+      yaw_bias = -yaw_bias;
+    }
+    int32_t max_bias = abs(base_ticks) / 2;
+    if (yaw_bias > max_bias) yaw_bias = max_bias;
+    if (yaw_bias < -max_bias) yaw_bias = -max_bias;
+
+    int32_t left_ticks = base_ticks - yaw_bias;
+    int32_t right_ticks = base_ticks + yaw_bias;
+
+    control_set_target_ticks_per_dt(left_ticks, right_ticks);
+  }
+
+  motor_brake_ms(200);
+  control_set_target_ticks_per_dt(0, 0);
+  motor_stop();
+  Servo_Center(&global_steer);
+}
+
 
 
 // Call this function at exactly 100 Hz (every 10ms)
 void move_tick_100Hz(void) {
   // Always integrate yaw so UI sees live orientation even when idle
   imu_update_yaw_100Hz();
-  if (!ms.active) return; // no active motion plan; nothing else to do
+  if (!ms.active) {
+    if (ms.servo_recentering_phase != 0U) {
+      if (ms.servo_recentering_counter > 0U) {
+        ms.servo_recentering_counter--;
+      }
+      if (ms.servo_recentering_counter == 0U) {
+        Servo_Center(&global_steer);
+        ms.steer_cmd = 0.0f;
+        ms.servo_recentering_phase = 0U;
+      }
+    }
+    return; // no active motion plan; nothing else to do
+  }
 
   float current_yaw = imu_get_yaw();
+  float filtered_yaw = yaw_filter_apply(current_yaw);
 
   // Branch by mode
   if (ms.mode == MOVE_TURN) {
@@ -280,19 +574,22 @@ void move_tick_100Hz(void) {
     ms.yaw_accum_deg += yaw_delta;
     ms.prev_yaw_deg = current_yaw;
 
-  // Compute remaining angle to target
-  float err = ms.yaw_target_deg - ms.yaw_accum_deg; // degrees remaining
-  float target_abs = fabsf(ms.yaw_target_deg);
-  float accum_abs = fabsf(ms.yaw_accum_deg);
+    Servo_WriteAngle(&global_steer, ms.steer_cmd);
 
-  // If within tolerance or we have crossed/exceeded the desired yaw, stop
-  if ((fabsf(err) <= TURN_YAW_TOLERANCE_DEG) ||
-    (target_abs > 0.0f && accum_abs >= target_abs)) {
+    // Compute remaining angle to target
+    float err = ms.yaw_target_deg - ms.yaw_accum_deg; // degrees remaining
+    float target_abs = fabsf(ms.yaw_target_deg);
+    float accum_abs = fabsf(ms.yaw_accum_deg);
+
+    // If within tolerance or we have crossed/exceeded the desired yaw, stop
+    if ((fabsf(err) <= TURN_YAW_TOLERANCE_DEG) ||
+        (target_abs > 0.0f && accum_abs >= target_abs)) {
       ms.active = 0;
       ms.mode = MOVE_IDLE;
       control_set_target_ticks_per_dt(0, 0);
       motor_brake_ms(50);
       motor_stop();
+      schedule_post_turn_servo_recentering();
       return;
     }
 
@@ -350,6 +647,104 @@ void move_tick_100Hz(void) {
     control_set_target_ticks_per_dt(left, right);
     return;
   }
+  else if (ms.mode == MOVE_ARC) {
+    ms.prev_yaw_deg = current_yaw;
+    uint8_t idx = ms.arc.segment_index;
+
+    if (idx >= 3U) {
+      Servo_Center(&global_steer);
+      ms.steer_cmd = 0.0f;
+      control_set_target_ticks_per_dt(0, 0);
+      ms.arc.segment_hold_ticks = 0U;
+
+      if (ms.arc.straighten_delay_ticks == 0U) {
+        ms.arc.straighten_delay_ticks = ARC_STRAIGHTEN_DELAY_TICKS;
+        return;
+      }
+
+      if (ms.arc.straighten_delay_ticks > 0U) {
+        ms.arc.straighten_delay_ticks--;
+        if (ms.arc.straighten_delay_ticks == 0U) {
+          ms.active = 0U;
+          ms.mode = MOVE_IDLE;
+        }
+      }
+      return;
+    }
+
+    float target = ms.arc.yaw_targets[idx];
+    float prev_target = (idx == 0U) ? 0.0f : ms.arc.yaw_targets[idx - 1U];
+    float servo_cmd = ms.arc.servo_cmds[idx];
+
+    ms.steer_cmd = servo_cmd;
+    Servo_WriteAngle(&global_steer, servo_cmd);
+
+    float base_float = (float)ARC_BASE_TICKS_PER_DT;
+    float yaw_error = fabsf(target - current_yaw);
+    if (yaw_error < ARC_SLOW_BAND_DEG) {
+      float ratio = yaw_error / ARC_SLOW_BAND_DEG;
+      base_float = (float)TURN_MIN_TICKS_PER_DT +
+                   ((float)ARC_BASE_TICKS_PER_DT - (float)TURN_MIN_TICKS_PER_DT) * ratio;
+      if (base_float < (float)TURN_MIN_TICKS_PER_DT) {
+        base_float = (float)TURN_MIN_TICKS_PER_DT;
+      }
+    }
+
+    if (ms.arc.segment_hold_ticks > 0U) {
+      base_float = (float)TURN_MIN_TICKS_PER_DT;
+      ms.arc.segment_hold_ticks--;
+    }
+
+    int32_t base_ticks = (int32_t)lroundf(base_float);
+    if (base_ticks < TURN_MIN_TICKS_PER_DT) {
+      base_ticks = TURN_MIN_TICKS_PER_DT;
+    }
+    int32_t inner_ticks = base_ticks;
+    int32_t outer_ticks = (int32_t)lroundf((float)base_ticks * ARC_OUTER_RATIO);
+    if (outer_ticks < inner_ticks) {
+      outer_ticks = inner_ticks;
+    }
+
+    int32_t left_target = base_ticks;
+    int32_t right_target = base_ticks;
+    if (servo_cmd > 0.0f) {
+      // Turning right: left wheel is outer.
+      left_target = outer_ticks;
+      right_target = inner_ticks;
+    } else if (servo_cmd < 0.0f) {
+      // Turning left: right wheel is outer.
+      left_target = inner_ticks;
+      right_target = outer_ticks;
+    }
+
+    control_set_target_ticks_per_dt(left_target, right_target);
+
+    uint8_t advance = 0U;
+    if (target > prev_target) {
+      if (current_yaw >= (target - ARC_YAW_TOLERANCE_DEG)) {
+        advance = 1U;
+      }
+    } else {
+      if (current_yaw <= (target + ARC_YAW_TOLERANCE_DEG)) {
+        advance = 1U;
+      }
+    }
+
+    if (advance) {
+      ms.arc.segment_index = idx + 1U;
+      if (ms.arc.segment_index < 2U) {
+        ms.arc.segment_hold_ticks = ARC_SEGMENT_MIN_HOLD_TICKS;
+      } else if (ms.arc.segment_index == 2U) {
+        ms.arc.segment_hold_ticks = ARC_SEGMENT_MIN_HOLD_TICKS;
+      } else {
+        Servo_Center(&global_steer);
+        ms.steer_cmd = 0.0f;
+        control_set_target_ticks_per_dt(0, 0);
+        ms.arc.straighten_delay_ticks = ARC_STRAIGHTEN_DELAY_TICKS;
+      }
+    }
+    return;
+  }
 
   // --- Straight mode ---
   ms.prev_yaw_deg = current_yaw;
@@ -400,7 +795,7 @@ void move_tick_100Hz(void) {
 
   // 5) Calculate yaw correction. Keep forward behavior and make reverse match it
   // by flipping the bias sign when driving backward.
-  int32_t yaw_bias = (int32_t)lroundf(-current_yaw * YAW_KP_TICKS_PER_DEG);
+  int32_t yaw_bias = (int32_t)lroundf(-filtered_yaw * YAW_KP_TICKS_PER_DEG);
   if (ms.dir < 0) yaw_bias = -yaw_bias;
   if (yaw_bias > base_ticks/2) yaw_bias = base_ticks/2;
   if (yaw_bias < -(base_ticks/2)) yaw_bias = -(base_ticks/2);
@@ -410,7 +805,13 @@ void move_tick_100Hz(void) {
   int32_t right_target_ticks = base_ticks + yaw_bias;
 
   // 6. Set the targets for the low-level PID speed controllers
-  control_set_target_ticks_per_dt(left_target_ticks * ms.dir, right_target_ticks * ms.dir);
+  // Trim left motor by -1 during reverse to compensate for stronger left motor
+  int32_t left_final = left_target_ticks * ms.dir;
+  int32_t right_final = right_target_ticks * ms.dir;
+  if (ms.dir < 0) {
+    left_final -= 2;
+  }
+  control_set_target_ticks_per_dt(left_final, right_final);
 }
 
 // Optional: runtime configuration of accel/decel distances (in centimeters)

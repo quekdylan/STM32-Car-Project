@@ -175,6 +175,13 @@ void commands_process(UART_HandleTypeDef *uart, const uint8_t *buf, uint16_t siz
         s_tail = cmd;
     }
 
+    // For SNAP commands, delay acknowledgment to allow robot to stop
+    // This prevents camera from snapping while robot is still moving
+    if (cmd->opType == COMMAND_OP_IMU_CALIBRATE) {
+        // Give time for any ongoing movement to complete and robot to settle
+        HAL_Delay(500);  // 500ms settling time
+    }
+
     commands_ack(uart, cmd, CMD_RCV);
 }
 
@@ -260,7 +267,7 @@ static Command *get_new_cmd(void)
 
 static void commands_ack(UART_HandleTypeDef *uart, const Command *cmd, uint8_t indicator)
 {
-    if (uart == NULL || cmd == NULL || cmd->str == NULL || cmd->str_size == 0U) {
+    if (uart == NULL || cmd == NULL || cmd->str == NULL || cmd->str_size <= 1U) {
         return;
     }
 
@@ -318,7 +325,12 @@ static uint8_t parse_snap_command(Command *cmd, const char *text)
     char *suffix = NULL;
     long seq = strtol(digits, &suffix, 10);
 
-    if (suffix == NULL || strcmp(suffix, "_C") != 0) {
+    if (suffix == NULL) {
+        return 0U;
+    }
+
+    // Accept _C, _L, or _R suffixes
+    if (strcmp(suffix, "_C") != 0 && strcmp(suffix, "_L") != 0 && strcmp(suffix, "_R") != 0) {
         return 0U;
     }
 
@@ -332,6 +344,7 @@ static uint8_t parse_snap_command(Command *cmd, const char *text)
     }
 
     cmd->opType = COMMAND_OP_IMU_CALIBRATE;
+    cmd->shouldSend = 0U; // suppress FIN acknowledgement; only send initial receipt
     cmd->val = (float)seq;
     cmd->dir = 0;
     cmd->distType = COMMAND_DIST_TARGET;

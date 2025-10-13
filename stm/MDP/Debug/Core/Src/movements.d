@@ -31,6 +31,7 @@ Core/Src/movements.o: ../Core/Src/movements.c ../Core/Inc/movements.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim_ex.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_uart.h \
  ../Core/Inc/imu.h ../Core/Inc/control.h ../Core/Inc/servo.h \
+ ../Core/Inc/sensor.h \
  ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os.h \
  ../Middlewares/Third_Party/FreeRTOS/Source/include/FreeRTOS.h \
  ../Core/Inc/FreeRTOSConfig.h \
@@ -78,6 +79,7 @@ Core/Src/movements.o: ../Core/Src/movements.c ../Core/Inc/movements.h \
 ../Core/Inc/imu.h:
 ../Core/Inc/control.h:
 ../Core/Inc/servo.h:
+../Core/Inc/sensor.h:
 ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os.h:
 ../Middlewares/Third_Party/FreeRTOS/Source/include/FreeRTOS.h:
 ../Core/Inc/FreeRTOSConfig.h:

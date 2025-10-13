@@ -72,9 +72,15 @@ static inline uint32_t Servo_US2CCR(const Servo *s, uint16_t us) {
 // #define SERVO_CENTER_US       1508U
 // #define SERVO_RIGHT_LIMIT_US  2196U
 
-#define SERVO_LEFT_LIMIT_US   993U
-#define SERVO_CENTER_US       1508U
-#define SERVO_RIGHT_LIMIT_US  2375U
+#define SERVO_LEFT_LIMIT_US   1040U  //1045
+#define SERVO_CENTER_US       1506U   //1506
+#define SERVO_RIGHT_LIMIT_US  2430U    //2400
+
+#define SERVO_POST_TURN_LEFT_US   1200U
+
+// in minerva 
+// Left: 1045 , Right: 2400 
+
 
 #ifdef __cplusplus
 }
