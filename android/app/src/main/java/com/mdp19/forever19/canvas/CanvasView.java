@@ -23,6 +23,7 @@ public class CanvasView extends View {
     private final Paint facingPaint = new Paint();
     private final Paint targetPaint = new Paint();
     private final Paint startRegionPaint = new Paint();
+
     private int highlightX = -1, highlightY = -1;
     private final Paint highlightPaint = new Paint();
     private boolean showFooter = false;
@@ -30,6 +31,8 @@ public class CanvasView extends View {
     private int footerBottomMarginPx = 0;
     private final Paint footerBgPaint = new Paint();
     private final Paint footerTextPaint = new Paint();
+    private Facing footerFacing = Facing.NORTH;
+
 
     private Grid grid;
 
@@ -295,7 +298,7 @@ public class CanvasView extends View {
         c.drawRect(left, top, right, bottom, footerBgPaint);
 
         // Text "(x,y)" centered in the bar
-        String label = "(" + footerX + "," + footerY + ")";
+        String label = "(" + footerX + "," + footerY + ") " + arrowFor(footerFacing);
         float textSize = Math.max(24f, cellSize * 0.45f);
         footerTextPaint.setTextSize(textSize);
         Paint.FontMetrics fm = footerTextPaint.getFontMetrics();
@@ -332,11 +335,22 @@ public class CanvasView extends View {
         invalidate();
     }
 
-    public void showFooterCoord(int x, int y) {
+    public void showFooterCoord(int x, int y, Facing facing) {
         this.footerX = x;
         this.footerY = y;
+        this.footerFacing = (facing != null) ? facing : Facing.NORTH;
         this.showFooter = true;
         invalidate();
+    }
+
+    private String arrowFor(Facing f) {
+        switch (f) {
+            case NORTH: return "↑";
+            case EAST:  return "→";
+            case SOUTH: return "↓";
+            case WEST:  return "←";
+            default:    return "↑";
+        }
     }
 
     public void hideFooterCoord() {

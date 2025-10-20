@@ -7,6 +7,7 @@ import android.content.Context;
 import android.widget.Toast;
 
 
+import com.mdp19.forever19.Facing;
 import com.mdp19.forever19.MyApplication;
 
 import java.util.Optional;
@@ -53,7 +54,8 @@ public class CanvasTouchController implements View.OnTouchListener {
                 if (grid.isInsideGrid(downX, downY)) {
                     selectedObstacle = grid.findObstacleWithApproxPos(downX, downY, SELECTION_RADIUS);
                     canvasView.setHighlightCell(downX, downY);
-                    canvasView.showFooterCoord(downX, downY);
+                    Facing f = selectedObstacle.map(GridObstacle::getFacing).orElse(Facing.NORTH);
+                    canvasView.showFooterCoord(downX, downY, f);
                     selectedObstacle.ifPresent(obst -> {
                         obst.setSelected(true);
                         canvasView.invalidate();
@@ -68,7 +70,8 @@ public class CanvasTouchController implements View.OnTouchListener {
             case MotionEvent.ACTION_MOVE: {
                 if (grid.isInsideGrid(x, y)) {
                     canvasView.setHighlightCell(x, y);
-                    canvasView.showFooterCoord(x, y);
+                    Facing f = selectedObstacle.map(GridObstacle::getFacing).orElse(Facing.NORTH);
+                    canvasView.showFooterCoord(x, y, f);
                 } else {
                     canvasView.clearHighlight();
                     canvasView.hideFooterCoord();
