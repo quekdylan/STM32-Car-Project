@@ -67,6 +67,8 @@ void Error_Handler(void);
 #define LED3_GPIO_Port GPIOE
 #define I2C2_SCL_Pin GPIO_PIN_10
 #define I2C2_SCL_GPIO_Port GPIOB
+#define trigger_pin_Pin GPIO_PIN_15
+#define trigger_pin_GPIO_Port GPIOB
 #define OLED_DC_Pin GPIO_PIN_11
 #define OLED_DC_GPIO_Port GPIOD
 #define OLED_RES_Pin GPIO_PIN_12
