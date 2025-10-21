@@ -17,13 +17,19 @@ public class CanvasView extends View {
     private int offsetX, offsetY; // To center the grid
     private final Paint gridPaint = new Paint();
     private final Paint textPaint = new Paint();
-    private final Paint obstacleSelectedPaint = new Paint();
-    private final Paint obstaclePaint = new Paint();
     private final Paint idPaint = new Paint();
     private final Paint facingPaint = new Paint();
     private final Paint targetPaint = new Paint();
     private final Paint startRegionPaint = new Paint();
-
+    private final Paint sandLight = new Paint();
+    private final Paint sandDark  = new Paint();
+    private final Paint shadowPaint = new Paint();
+    private final Paint bushBasePaint   = new Paint();
+    private final Paint bushLightPaint  = new Paint();
+    private final Paint bushShadowPaint = new Paint();
+    private final Paint padFillPaint = new Paint();
+    private final Paint padRingPaint = new Paint();
+    private final Paint padOuterPaint = new Paint();
     private int highlightX = -1, highlightY = -1;
     private final Paint highlightPaint = new Paint();
     private boolean showFooter = false;
@@ -58,12 +64,6 @@ public class CanvasView extends View {
         textPaint.setTextAlign(Paint.Align.CENTER);
         textPaint.setFakeBoldText(true);
 
-        // Obstacle styling
-        obstaclePaint.setColor(Color.BLACK);
-        obstaclePaint.setStyle(Paint.Style.FILL);
-        obstacleSelectedPaint.setColor(Color.GRAY);
-        obstacleSelectedPaint.setStyle(Paint.Style.FILL);
-
         // ID text styling (obstacle IDs)
         idPaint.setColor(Color.WHITE);
         idPaint.setTextAlign(Paint.Align.CENTER);
@@ -77,17 +77,17 @@ public class CanvasView extends View {
         targetPaint.setTextSize(24);
 
         // Facing indicator styling (Orange Strip)
-        facingPaint.setColor(Color.rgb(255, 165, 0)); // Orange color
+        facingPaint.setColor(Color.rgb(32, 78, 74));
         facingPaint.setStyle(Paint.Style.FILL);
 
         // Initialize startRegionPaint
-        startRegionPaint.setColor(Color.GREEN);
+        startRegionPaint.setColor(Color.WHITE);
         startRegionPaint.setStrokeWidth(4);  // Make it slightly thicker
         startRegionPaint.setStyle(Paint.Style.STROKE);
 
         // Highlight styling
         highlightPaint.setStyle(Paint.Style.FILL);
-        highlightPaint.setColor(0x59FFD54F);
+        highlightPaint.setColor(0x40A52A2A);
 
         // Footer background (semi-transparent)
         footerBgPaint.setStyle(Paint.Style.FILL);
@@ -98,6 +98,35 @@ public class CanvasView extends View {
         footerTextPaint.setTextAlign(Paint.Align.CENTER);
         footerTextPaint.setFakeBoldText(true);
         footerTextPaint.setTextSize(32);
+
+        // sand tones
+        sandLight.setColor(Color.rgb(247, 207, 144)); // light sand
+        sandDark.setColor(Color.rgb(233, 184, 117));  // darker sand
+
+        // Bush colors
+        bushBasePaint.setColor(Color.rgb(46, 160, 67));     // main green
+        bushBasePaint.setStyle(Paint.Style.FILL);
+
+        bushLightPaint.setColor(Color.rgb(88, 200, 92));    // light leaf tips
+        bushLightPaint.setStyle(Paint.Style.FILL);
+
+        bushShadowPaint.setColor(Color.argb(60, 0, 0, 0));  // subtle drop shadow
+        bushShadowPaint.setStyle(Paint.Style.FILL);
+
+        // Spawn pad
+        padFillPaint.setStyle(Paint.Style.FILL);
+        padFillPaint.setColor(Color.argb(120, 66, 144, 245));  // translucent blue
+
+        padRingPaint.setStyle(Paint.Style.STROKE);
+        padRingPaint.setStrokeWidth(6f);
+        padRingPaint.setColor(Color.argb(220, 11, 92, 173));  // solid ring
+
+        padOuterPaint.setStyle(Paint.Style.STROKE);
+        padOuterPaint.setStrokeWidth(18f);
+        padOuterPaint.setColor(Color.argb(90, 66, 144, 245));  // soft outer halo
+
+        // id text a touch bigger to read on blocks
+        idPaint.setTextSize(18);
 
     }
 
@@ -118,6 +147,7 @@ public class CanvasView extends View {
     @Override
     protected void onDraw(@NonNull Canvas canvas) {
         super.onDraw(canvas);
+        drawSandBackground(canvas);
         drawGrid(canvas);
         drawStartRegion(canvas);
         drawAxisLabels(canvas);
@@ -133,40 +163,61 @@ public class CanvasView extends View {
         int gridWidth = gridSize * cellSize;
         int gridHeight = gridSize * cellSize;
 
-        Paint redPaint = new Paint();
-        redPaint.setColor(Color.RED);
-        redPaint.setStrokeWidth(2);
-        redPaint.setStyle(Paint.Style.STROKE);
+        Paint brownPaint = new Paint();
+        brownPaint.setColor(Color.rgb(125,75,19));
+        brownPaint.setStrokeWidth(2);
+        brownPaint.setStyle(Paint.Style.STROKE);
 
-        Paint bluePaint = new Paint();
-        bluePaint.setColor(Color.BLUE);
-        bluePaint.setStrokeWidth(2);
-        bluePaint.setStyle(Paint.Style.STROKE);
+        Paint brownPaint2 = new Paint();
+        brownPaint2.setColor(Color.rgb(125,39,18));
+        brownPaint2.setStrokeWidth(2);
+        brownPaint2.setStyle(Paint.Style.STROKE);
 
         // Draw vertical grid lines (alternating colors)
         for (int i = 0; i <= gridSize; i++) {
-            Paint paintToUse = (i % 2 == 0) ? redPaint : bluePaint;
+            Paint paintToUse = (i % 2 == 0) ? brownPaint : brownPaint2;
             canvas.drawLine(offsetX + i * cellSize, offsetY, offsetX + i * cellSize, offsetY + gridHeight, paintToUse);
         }
 
         // Draw horizontal grid lines (alternating colors)
         for (int i = 0; i <= gridSize; i++) {
-            Paint paintToUse = (i % 2 == 0) ? bluePaint : redPaint;
+            Paint paintToUse = (i % 2 == 0) ? brownPaint2 : brownPaint;
             canvas.drawLine(offsetX, offsetY + i * cellSize, offsetX + gridWidth, offsetY + i * cellSize, paintToUse);
         }
     }
 
-    private void drawStartRegion(Canvas canvas) {
-        int left = offsetX;
-        int right = offsetX + (4 * cellSize);
-        int top = offsetY + ((Grid.GRID_SIZE - 4) * cellSize); // Flip y-axis
-        int bottom = offsetY + (Grid.GRID_SIZE * cellSize);
+    private void drawSandBackground(Canvas canvas) {
+        int gridSize = Grid.GRID_SIZE;
+        for (int gx = 0; gx < gridSize; gx++) {
+            for (int gy = 0; gy < gridSize; gy++) {
+                boolean dark = ((gx + gy) % 2 == 0);
+                Paint p = dark ? sandDark : sandLight;
 
-        // Draw the green boundary lines
-        canvas.drawLine(left, bottom, right, bottom, startRegionPaint); // Bottom line (0,0) to (4,0)
-        canvas.drawLine(left, top, right, top, startRegionPaint);       // Top line (0,4) to (4,4)
-        canvas.drawLine(left, top, left, bottom, startRegionPaint);     // Left line (0,0) to (0,4)
-        canvas.drawLine(right, top, right, bottom, startRegionPaint);   // Right line (4,0) to (4,4)
+                int left   = offsetX + gx * cellSize;
+                int top    = offsetY + (gridSize - 1 - gy) * cellSize; // flip y
+                int right  = left + cellSize;
+                int bottom = top + cellSize;
+
+                canvas.drawRect(left, top, right, bottom, p);
+            }
+        }
+    }
+
+    private void drawStartRegion(Canvas canvas) {
+        final int SPAWN_CX = 1;
+        final int SPAWN_CY = 1;
+
+        // pixel center of that cell
+        float cx = offsetX + (SPAWN_CX + 0.5f) * cellSize;
+        float cy = offsetY + (Grid.GRID_SIZE - SPAWN_CY - 0.5f) * cellSize;
+
+        float rOuter = 1.45f * cellSize;
+        float rRing  = 1.55f * cellSize;
+        float rFill  = 1.35f * cellSize;
+
+        canvas.drawCircle(cx, cy, rOuter, padOuterPaint);
+        canvas.drawCircle(cx, cy, rRing,  padRingPaint);
+        canvas.drawCircle(cx, cy, rFill,  padFillPaint);
     }
 
     private void drawAxisLabels(Canvas canvas) {
@@ -234,31 +285,47 @@ public class CanvasView extends View {
         );
     }
 
+    private void drawBushRect(Canvas c, int left, int top, int right, int bottom, boolean selected) {
+        int inset = Math.max(1, (int)(cellSize * 0.06f));
+        float L = left + inset;
+        float T = top  + inset;
+        float R = right - inset;
+        float B = bottom - inset;
+
+        // drop shadow (offset)
+        float dx = Math.max(1f, cellSize * 0.04f);
+        float dy = Math.max(1f, cellSize * 0.06f);
+        c.drawRect(L + dx, T + dy, R + dx, B + dy, bushShadowPaint);
+
+        // base rectangle
+        c.drawRect(L, T, R, B, selected ? bushLightPaint : bushBasePaint);
+    }
+
     private void drawObstacles(Canvas canvas) {
         int id = 1;
-        for (GridObstacle gridObstacle : grid.getObstacleList()){
-            int left = offsetX + gridObstacle.getPosition().getXInt() * cellSize;
-            int top = offsetY + (Grid.GRID_SIZE - 1 - gridObstacle.getPosition().getYInt()) * cellSize;  // Flip y-axis
+        for (GridObstacle gridObstacle : grid.getObstacleList()) {
+            int gx = gridObstacle.getPosition().getXInt();
+            int gy = gridObstacle.getPosition().getYInt();
+
+            int left = offsetX + gx * cellSize;
+            int top = offsetY + (Grid.GRID_SIZE - 1 - gy) * cellSize; // flip y
             int right = left + cellSize;
             int bottom = top + cellSize;
 
             boolean selected = gridObstacle.isSelected();
-            canvas.drawRect(left, top, right, bottom, selected ? obstacleSelectedPaint : obstaclePaint);
 
-            // Compute text position (center of cell)
-            float textX = left + (cellSize / 2);
-            float textY = top + (cellSize / 2) - ((idPaint.descent() + idPaint.ascent()) / 2);
+            // draw bush-style rectangle
+            drawBushRect(canvas, left, top, right, bottom, selected);
 
-            if(gridObstacle.getTarget() == null){
-                // Draw ID text (no target yet)
+            // ID/target text (white pops on green)
+            float textX = left + (cellSize / 2f);
+            float textY = top + (cellSize / 2f) - ((idPaint.descent() + idPaint.ascent()) / 2f);
+            if (gridObstacle.getTarget() == null) {
                 canvas.drawText(String.valueOf(gridObstacle.getId()), textX, textY, idPaint);
-            }
-            else {
-                // Draw target text if avail
+            } else {
                 canvas.drawText(gridObstacle.getTarget().getTargetStr(), textX, textY, targetPaint);
             }
 
-            // Draw facing indicator
             drawFacingIndicator(canvas, gridObstacle.getFacing(), left, top, right, bottom);
         }
     }

@@ -9,4 +9,23 @@
     <color name="tertiary">#6377E6</color>
     <color name="bt_device_list_bg">#B0FFFFFF</color>
     <color name="button_pressed_grey">#808080</color>
+
+    <!-- Background blues -->
+    <color name="bs_blue_1">#2DB4F6</color>
+    <color name="bs_blue_2">#006BB8</color>
+
+    <!-- CTA yellow -->
+    <color name="bs_yellow_1">#FFD34A</color>
+    <color name="bs_yellow_2">#F5B400</color>
+    <color name="bs_yellow_text">#222222</color>
+
+    <!-- Purple pill buttons -->
+    <color name="bs_purple_1">#6A4BD9</color>
+    <color name="bs_purple_2">#5238B5</color>
+
+    <!-- Cards / text -->
+    <color name="bs_card">#1AFFFFFF</color>
+    <color name="bs_white">#FFFFFF</color>
+    <color name="bs_text_dark">#20242A</color>
+
 </resources>

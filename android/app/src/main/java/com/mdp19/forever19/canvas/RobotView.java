@@ -21,6 +21,16 @@ public class RobotView extends View {
     private int offsetX, offsetY; // To align with the grid
     private Robot robot;
 
+    // Keep robot icon centered on the spawn pad until you unlock it
+    private boolean lockToSpawn = true;
+    private static final int SPAWN_CX = 1;
+    private static final int SPAWN_CY = 1;
+
+    public void setLockToSpawn(boolean lock) {
+        this.lockToSpawn = lock;
+        invalidate();
+    }
+
     public RobotView(Context context, AttributeSet attrs) {
         super(context, attrs);
         init();
@@ -56,9 +66,11 @@ public class RobotView extends View {
         int robotWidth = cellSize * 2;  // Robot spans 2 grid cells in width
         int robotHeight = (int) (cellSize * 2.1);  // Robot spans ~2.1 grid cells in height
 
-        // Calculate the position of the robot centered on its current grid cell
-        int centerX = offsetX + (robot.getPosition().getXInt() * cellSize) + (cellSize / 2);
-        int centerY = offsetY + (Grid.GRID_SIZE - 1 - robot.getPosition().getYInt()) * cellSize + (cellSize / 2);
+        int gx = lockToSpawn ? SPAWN_CX : robot.getPosition().getXInt();
+        int gy = lockToSpawn ? SPAWN_CY : robot.getPosition().getYInt();
+
+        int centerX = offsetX + gx * cellSize + (cellSize / 2);
+        int centerY = offsetY + (Grid.GRID_SIZE - 1 - gy) * cellSize + (cellSize / 2);
 
         // Adjust the position so the robot is centered correctly
         int left = centerX - (robotWidth / 2);
@@ -66,16 +78,14 @@ public class RobotView extends View {
         int right = left + robotWidth;
         int bottom = top + robotHeight;
 
-        // Choose the correct robot facing bitmap
         Bitmap currentRobotBitmap = switch (robot.getFacing()) {
             case NORTH -> robotFacingNorth;
-            case EAST -> robotFacingEast;
+            case EAST  -> robotFacingEast;
             case SOUTH -> robotFacingSouth;
-            case WEST -> robotFacingWest;
-            case SKIP -> null;
+            case WEST  -> robotFacingWest;
+            case SKIP  -> null;
         };
 
-        // Draw the scaled and centered robot bitmap
         if (currentRobotBitmap != null) {
             canvas.drawBitmap(currentRobotBitmap, null, new Rect(left, top, right, bottom), null);
         }
