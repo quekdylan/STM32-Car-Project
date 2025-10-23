@@ -137,7 +137,7 @@ public class CanvasActivity extends AppCompatActivity {
             });
         }
 
-        // Bind movement buttons
+//         //Bind movement buttons
 //        findViewById(R.id.btnRobotForward).setOnClickListener(view -> {
 //            if (myApp.btConnection() != null)
 //                myApp.btConnection().sendMessage("f");

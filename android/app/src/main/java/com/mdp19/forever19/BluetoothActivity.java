@@ -150,7 +150,7 @@ public class BluetoothActivity extends AppCompatActivity {
         if (myApp.btConnection() == null)
             connectedPanel.setVisibility(View.INVISIBLE); //set invisible if no connection
         receivedMsgView = findViewById(R.id.textReceivedMsg);
-        receivedMsgView.setText("Received Messages:\n");
+        receivedMsgView.setText("BATTLE LOG:\n");
         connectedText = findViewById(R.id.textConnectedStatus);
     }
 

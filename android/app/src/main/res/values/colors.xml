@@ -28,4 +28,9 @@
     <color name="bs_white">#FFFFFF</color>
     <color name="bs_text_dark">#20242A</color>
 
+    <!-- Other background -->
+    <color name="bs_green">#32C12C</color>
+    <color name="bs_grey">#5F7D8E</color>
+    <color name="bs_cyan">#00A5F9</color>
+
 </resources>
