@@ -9,7 +9,7 @@ ARENA_HEIGHT: int = 20
 OBSTACLE_SIZE: int = 1
 
 # no. of iterations to run algorithm for to find the most accurate shortest path
-ITERATIONS: int = 2500
+ITERATIONS: int = 100000
 
 # Cost for the chance that the robot touches an obstacle.
 # The higher the value, the less likely the robot moves too close to an obstacle.
@@ -17,7 +17,7 @@ SAFE_COST: int = 1000
 
 # Cost of taking an image off center.
 # The higher the value, the less likely the robot takes pictures from a position that is not directly in front of image.
-SCREENSHOT_COST: int = 100
+SCREENSHOT_COST: int = 10
 # the cost for when the robot is too close or too far from the obstacle
 DISTANCE_COST: int = 1200
 

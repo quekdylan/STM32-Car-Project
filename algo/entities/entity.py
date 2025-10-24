@@ -159,7 +159,7 @@ class Obstacle(CellState):
             x (int): x-coordinate of robot (wrt center)
             y (int): y-coordinate of robot (wrt center)
         """
-        return 0 < x < ARENA_WIDTH - 1 and 0 < y < ARENA_HEIGHT - 1
+        return 1 <= x < ARENA_WIDTH - 1 and 1 <= y < ARENA_HEIGHT - 1
 
 
 class Grid:
@@ -261,10 +261,7 @@ class Grid:
         """
         Checks if given position is within bounds
         """
-        # allow robot center to be in the range [1, size - 2] inclusive
-        # this matches CellState.is_valid_position which allows positions
-        # up to ARENA_WIDTH - 2 / ARENA_HEIGHT - 2 (i.e. excludes outer border)
-        return 1 <= x <= self.size_x - 2 and 1 <= y <= self.size_y - 2
+        return 1 <= x < self.size_x - 1 and 1 <= y < self.size_y - 1
 
     def get_view_obstacle_positions(self) -> list[list[CellState]]:
         """
