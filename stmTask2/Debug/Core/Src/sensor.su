@@ -1,0 +1,8 @@
+../Core/Src/sensor.c:44:13:delay_us	24	static,ignoring_inline_asm
+../Core/Src/sensor.c:63:6:ultrasonic_init_ex	32	static
+../Core/Src/sensor.c:79:7:ultrasonic_init	24	static
+../Core/Src/sensor.c:84:6:ultrasonic_trigger	24	static
+../Core/Src/sensor.c:114:7:ultrasonic_get_distance_cm	4	static
+../Core/Src/sensor.c:119:9:ultrasonic_is_busy	4	static
+../Core/Src/sensor.c:124:6:ultrasonic_cancel	8	static
+../Core/Src/sensor.c:147:8:HAL_TIM_IC_CaptureCallback	48	static

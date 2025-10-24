@@ -1,0 +1,16 @@
+../Core/Inc/servo.h:46:20:Servo_Center	16	static
+../Core/Src/movements.c:109:14:turn_profile_get_steer_mag	4	static
+../Core/Src/movements.c:116:14:turn_profile_get_outer_ratio	4	static
+../Core/Src/movements.c:123:17:compute_servo_settle_ms	24	static
+../Core/Src/movements.c:130:13:schedule_post_turn_servo_recentering	16	static
+../Core/Src/movements.c:142:9:move_is_active	4	static
+../Core/Src/movements.c:146:6:move_set_turn_profile	16	static
+../Core/Src/movements.c:154:21:move_get_turn_profile	4	static
+../Core/Src/movements.c:159:6:move_abort	8	static
+../Core/Src/movements.c:171:6:move_start_straight	40	static
+../Core/Src/movements.c:218:6:move_turn	40	static
+../Core/Src/movements.c:290:6:move_tick_100Hz	128	static
+../Core/Src/movements.c:464:6:move_set_profile_distances_cm	16	static
+../Core/Src/movements.c:472:6:move_get_profile_distances_cm	16	static
+../Core/Src/movements.c:478:6:move_set_turn_spinup_ticks	16	static
+../Core/Src/movements.c:483:10:move_get_turn_spinup_ticks	4	static

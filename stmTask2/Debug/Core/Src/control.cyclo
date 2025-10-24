@@ -1,0 +1,10 @@
+../Core/Src/control.c:43:9:control_is_due	1
+../Core/Src/control.c:44:6:control_clear_due	1
+../Core/Src/control.c:46:6:control_init	1
+../Core/Src/control.c:61:6:control_set_target_ticks_per_dt	13
+../Core/Src/control.c:82:6:control_reset_integrators	1
+../Core/Src/control.c:88:6:control_sync_encoders	1
+../Core/Src/control.c:98:6:control_step	8
+../Core/Src/control.c:146:6:HAL_TIM_PeriodElapsedCallback	2
+../Core/Src/control.c:153:6:control_get_target_and_measured	5
+../Core/Src/control.c:164:6:control_get_outputs	3
