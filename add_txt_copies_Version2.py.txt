@@ -1,0 +1,78 @@
+"""
+Usage:
+  python add_txt_copies.py [branch-name] [--force] [--include-ignored]
+
+This script:
+ - creates branch (default: add-txt-copies)
+ - finds files with configured extensions
+ - copies each to filename + '.txt'
+ - skips files matched by .gitignore by default
+ - git add, commit, and push
+
+Pass --include-ignored to override .gitignore skipping.
+"""
+import os
+import sys
+import subprocess
+from shutil import copy2
+
+def run(cmd, capture=False, check=True):
+    if capture:
+        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return subprocess.run(cmd, check=check)
+
+args = sys.argv[1:]
+branch = "add-txt-copies"
+force = False
+include_ignored = False
+
+for a in args:
+    if a == "--force":
+        force = True
+    elif a == "--include-ignored":
+        include_ignored = True
+    else:
+        branch = a
+
+EXTENSIONS = {"java","kt","py","js","ts","xml","gradle","properties","c","cpp","h","swift","sh","rb","go","rs","ps1"}
+
+# create branch
+run(["git","switch", branch])
+
+found = False
+for root, dirs, files in os.walk("."):
+    if ".git" in root.split(os.sep):
+        continue
+    for f in files:
+        ext = f.rsplit(".",1)[-1].lower() if "." in f else ""
+        if ext in EXTENSIONS:
+            src = os.path.join(root, f)
+            # Respect .gitignore unless overridden
+            if not include_ignored:
+                proc = subprocess.run(["git","check-ignore","-q","--", src])
+                if proc.returncode == 0:
+                    print("Ignored by .gitignore, skipping:", src)
+                    continue
+            dst = src + ".txt"
+            if os.path.exists(dst) and not force:
+                print("Skipping existing:", dst)
+                continue
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            copy2(src, dst)
+            run(["git","add", dst])
+            print("Added:", dst)
+            found = True
+
+if not found:
+    print("No matching source files found (or all were skipped). Extensions:", EXTENSIONS)
+    sys.exit(0)
+
+# Commit and push
+proc = subprocess.run(["git","diff","--cached","--name-only"], stdout=subprocess.PIPE, text=True)
+staged = proc.stdout.strip()
+if staged:
+    run(["git","commit","-m","Add .txt copies of source files (append .txt to filenames)"])
+    run(["git","push","-u","origin", branch])
+    print(f"Pushed branch '{branch}' to origin. Open a pull request to merge.")
+else:
+    print("No new files staged; nothing to commit.")
