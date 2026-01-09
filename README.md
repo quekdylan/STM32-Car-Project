@@ -1,7 +1,19 @@
 
 # STM32 Firmware Documentation
 
-This document provides a comprehensive overview of the STM32 firmware for the MDP Group 19 robot, including tunable parameters and important file descriptions.
+This document provides a comprehensive overview of the STM32 firmware for the self driving robot, including tunable parameters and important file descriptions.
+
+## Attributions
+| Role | Member | 
+|:---|:---| 
+| Android | Hilarius Jeremy | 
+| Image | Wu Chengrui | 
+| Algorithms | Zi Yuan | 
+| Algorithms | Andy | 
+| RPI | Joel | 
+| RPI | Siaw Xuan | 
+| STM | Dylan | 
+| STM | Karthik |
 
 ## Table of Contents
 - [Tunable Parameters](#tunable-parameters)
