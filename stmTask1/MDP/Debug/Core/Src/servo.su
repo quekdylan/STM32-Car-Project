@@ -1,8 +1,0 @@
-../Core/Inc/servo.h:46:20:Servo_Center	16	static
-../Core/Inc/servo.h:63:24:Servo_US2CCR	24	static
-../Core/Src/servo.c:3:24:_get_arr	16	static
-../Core/Src/servo.c:7:6:Servo_Attach	32	static
-../Core/Src/servo.c:24:19:Servo_Start	24	static
-../Core/Src/servo.c:32:19:Servo_Stop	16	static
-../Core/Src/servo.c:37:6:Servo_WriteUS	24	static
-../Core/Src/servo.c:46:6:Servo_WriteAngle	32	static

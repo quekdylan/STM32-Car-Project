@@ -1,6 +1,0 @@
-../Core/Src/motor.c:13:6:motor_init	1
-../Core/Src/motor.c:25:6:motor_set_speeds	9
-../Core/Src/motor.c:69:6:motor_stop	1
-../Core/Src/motor.c:76:9:motor_get_left_encoder_counts	1
-../Core/Src/motor.c:81:9:motor_get_right_encoder_counts	1
-../Core/Src/motor.c:85:6:motor_reset_encoders	1

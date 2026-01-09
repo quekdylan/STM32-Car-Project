@@ -2,7 +2,7 @@
 <Configuration status="info">
     <ThresholdFilter level="INFO"/>
     <Appenders>
-        <RollingFile name="DEBUGFILE" fileName="/Users/dylan/Desktop/NTU/SC2079/SC2079-MDP-Group-19/stm/.metadata/.ide.log" filePattern="/Users/dylan/Desktop/NTU/SC2079/SC2079-MDP-Group-19/stm/.metadata/.ide.log-%d{yyyy-MM-dd}.log">
+        <RollingFile name="DEBUGFILE" fileName="/Users/dylan/Desktop/NTU/SC2079/SC2079-MDP-Group-19/stm/MDP/.metadata/.ide.log" filePattern="/Users/dylan/Desktop/NTU/SC2079/SC2079-MDP-Group-19/stm/MDP/.metadata/.ide.log-%d{yyyy-MM-dd}.log">
             <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss,SSS} [%p] %c{1}:%L - %m%n" />
             <Policies>
                 <TimeBasedTriggeringPolicy interval="1" modulate="true" />

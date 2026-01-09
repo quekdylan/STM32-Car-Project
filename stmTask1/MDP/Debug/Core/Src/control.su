@@ -1,9 +1,0 @@
-../Core/Src/control.c:43:9:control_is_due	4	static
-../Core/Src/control.c:44:6:control_clear_due	4	static
-../Core/Src/control.c:46:6:control_init	24	static
-../Core/Src/control.c:61:6:control_set_target_ticks_per_dt	16	static
-../Core/Src/control.c:82:6:control_sync_encoders	8	static
-../Core/Src/control.c:92:6:control_step	48	static
-../Core/Src/control.c:140:6:HAL_TIM_PeriodElapsedCallback	16	static
-../Core/Src/control.c:147:6:control_get_target_and_measured	24	static
-../Core/Src/control.c:158:6:control_get_outputs	16	static

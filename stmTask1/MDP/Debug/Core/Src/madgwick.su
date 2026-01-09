@@ -1,6 +1,0 @@
-../Core/Src/madgwick.c:14:21:inv_sqrt	16	static
-../Core/Src/madgwick.c:18:6:madgwick_init	16	static
-../Core/Src/madgwick.c:25:6:madgwick_update_imu	144	static
-../Core/Src/madgwick.c:69:6:madgwick_get_quat	24	static
-../Core/Src/madgwick.c:74:6:madgwick_get_euler_deg	56	static
-../Core/Src/madgwick.c:93:6:madgwick_set_beta	16	static
